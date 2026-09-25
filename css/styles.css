@@ -19,7 +19,7 @@ body {
   transition: background-color 0.3s, color 0.3s;
 }
 
-#saveBtn {
+#exportPdfBtn {
   background-color: var(--postman-orange);
   color: white;
   border: none;
@@ -28,9 +28,26 @@ body {
   cursor: pointer;
   transition: background-color 0.3s, transform 0.2s;
 }
-#saveBtn:hover {
+#exportPdfBtn:hover {
   background-color: var(--highlight);
   transform: translateY(-2px);
+}
+#exportPdfBtn:disabled {
+  opacity: 0.7;
+  transform: none;
+  cursor: wait;
+}
+
+#exportHtmlBtn {
+  border-color: var(--postman-orange);
+  color: var(--postman-orange);
+  padding: 10px 20px;
+  border-radius: 5px;
+  transition: background-color 0.3s, color 0.3s;
+}
+#exportHtmlBtn:hover {
+  background-color: var(--postman-orange);
+  color: white;
 }
 
 /* Header Styles */
@@ -283,18 +300,51 @@ header {
   word-break: break-all;
 }
 
-.response-body-container {
-  background-color: var(--bg);
-  max-height: 400px;
-  overflow-y: auto;
-  white-space: pre-wrap;
-  word-wrap: break-word;
-  margin-top: 10px;
+/* Run Metadata Bar */
+.run-meta-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 8px 15px;
+  border-radius: 6px;
+  background-color: var(--card-bg);
+  border: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--muted);
 }
 
-.response-body-container pre {
-  font-size: 0.85em;
-  margin: 0;
+.run-meta-item {
+  display: flex;
+  align-items: center;
+}
+
+/* Test Detail Modal */
+.assertion-row {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.assertion-row:last-child {
+  border-bottom: none;
+}
+
+.assertion-row.failed {
+  color: var(--fail-color);
+}
+
+.assertion-row.passed {
+  color: var(--pass-color);
+}
+
+.detail-body-pre {
+  background-color: var(--bg);
+  padding: 12px;
+  border-radius: 6px;
+  max-height: 320px;
+  overflow: auto;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+  word-wrap: break-word;
 }
 
 /* Upload Area */

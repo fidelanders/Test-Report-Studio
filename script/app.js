@@ -1,7 +1,6 @@
 let allTests = [];
 let passedTests = [];
 let failedTests = [];
-let slowTests = [];
 const fileInput = document.getElementById('fileInput');
 const jsonUploadArea = document.getElementById('jsonUploadArea');
 const reportContainer = document.getElementById('reportContainer');
@@ -22,6 +21,108 @@ function prettyPrintJson(json) {
     } catch (e) {
         return json;
     }
+}
+
+// Fallback for any value that would otherwise render as "undefined" / blank
+function safe(value, fallback = 'N/A') {
+    return (value === undefined || value === null || value === '') ? fallback : value;
+}
+
+// Prevent uploaded report content (names, urls, assertion text) from being
+// interpreted as HTML when injected via innerHTML.
+function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }[c]));
+}
+
+// Newman's JSON reporter stores the response body as a raw Buffer
+// ({ type: "Buffer", data: [...] }), not as a string like the Postman App
+// export does - and different Newman/Node versions have been seen to
+// serialize that buffer slightly differently (a wrapped {type,data} object,
+// a bare array of byte values, a numeric-keyed object, or occasionally a
+// base64 string). Try each shape in turn instead of assuming just one.
+function decodeResponseBody(response, result) {
+    if (!response && !result) return '';
+    if (typeof response?.body === 'string' && response.body) return response.body;
+    if (typeof result?.responseBody === 'string' && result.responseBody) return result.responseBody;
+
+    const stream = response?.stream;
+    if (stream !== undefined && stream !== null) {
+        try {
+            if (stream.type === 'Buffer' && Array.isArray(stream.data)) {
+                return new TextDecoder('utf-8').decode(new Uint8Array(stream.data));
+            }
+            if (Array.isArray(stream)) {
+                return new TextDecoder('utf-8').decode(new Uint8Array(stream));
+            }
+            if (typeof stream === 'object') {
+                // Numeric-keyed object form, e.g. {"0":123,"1":34,...}
+                const byteKeys = Object.keys(stream).filter(k => /^\d+$/.test(k));
+                if (byteKeys.length) {
+                    const bytes = byteKeys.sort((a, b) => Number(a) - Number(b)).map(k => stream[k]);
+                    return new TextDecoder('utf-8').decode(new Uint8Array(bytes));
+                }
+            }
+            if (typeof stream === 'string' && stream) {
+                try {
+                    return atob(stream); // base64 case
+                } catch (e) {
+                    return stream; // plain text fallback
+                }
+            }
+        } catch (e) {
+            return '(unable to decode response body: ' + e.message + ')';
+        }
+    }
+
+    // Some exports (or programmatic Newman runs) attach a parsed body under
+    // response.text / response.json instead of a raw stream.
+    if (typeof response?.text === 'string' && response.text) return response.text;
+    if (response?.json) {
+        try { return JSON.stringify(response.json, null, 2); } catch (e) { /* fall through */ }
+    }
+
+    return '';
+}
+
+// Postman/Newman request bodies come in several "mode" shapes depending on
+// how the request was authored (raw JSON, form fields, urlencoded, GraphQL).
+// Grabbing only `.raw` silently drops the other three, which is the most
+// likely reason "Request" showed blank for requests that do have a body.
+function extractRequestBody(request) {
+    const body = request?.body;
+    if (!body) return '';
+    if (typeof body === 'string') return body;
+
+    if (body.mode === 'raw' && typeof body.raw === 'string') return body.raw;
+    if (body.mode === 'urlencoded' && Array.isArray(body.urlencoded)) {
+        return body.urlencoded.map(p => `${p.key}=${p.value ?? ''}`).join('&');
+    }
+    if (body.mode === 'formdata' && Array.isArray(body.formdata)) {
+        return body.formdata.map(p => `${p.key}: ${p.value ?? '(file)'}`).join('\n');
+    }
+    if (body.mode === 'graphql' && body.graphql) {
+        try { return JSON.stringify(body.graphql, null, 2); } catch (e) { /* fall through */ }
+    }
+    if (typeof body.raw === 'string' && body.raw) return body.raw;
+
+    // Unrecognized shape - show the raw object rather than nothing, so it's
+    // at least visible that a body exists and what it looks like.
+    try {
+        return JSON.stringify(body, null, 2);
+    } catch (e) {
+        return '';
+    }
+}
+
+// Detect which of the two supported export formats was uploaded, since
+// Postman's Collection Runner export and Newman's JSON reporter output use
+// different top-level shapes for the same kind of run.
+function detectReportFormat(data) {
+    if (data && data.run && Array.isArray(data.run.executions)) return 'newman';
+    if (data && Array.isArray(data.results)) return 'postman';
+    return 'unknown';
 }
 
 function toggleVisibility(elementId, iconElement = null) {
@@ -46,15 +147,6 @@ function toggleVisibility(elementId, iconElement = null) {
     }
 }
 
-function toggleResponseBody(button) {
-    const container = button.nextElementSibling;
-    const isHidden = container.style.display === 'none';
-    container.style.display = isHidden ? 'block' : 'none';
-    button.innerHTML = isHidden 
-        ? '<i class="fas fa-code me-2"></i>Hide Response Body' 
-        : '<i class="fas fa-code me-2"></i>Show Response Body';
-}
-
 function renderTests(filtered, containerId) {
     const resultsEl = document.getElementById(containerId);
     if (!resultsEl) return;
@@ -72,13 +164,13 @@ function renderTests(filtered, containerId) {
         return `
         <div class="test-card ${statusClass}">
             <div class="d-flex justify-content-between align-items-center">
-                <div class="test-name">${item.name}</div>
+                <div class="test-name">${escapeHtml(safe(item.name, 'Unnamed Request'))}</div>
                 <div class="test-status ${statusClass}">${statusText}</div>
             </div>
             
             <div class="endpoint d-flex align-items-center mt-2">
-                <strong class="me-2">${item.method}</strong>
-                <span id="${containerId}-url-${index}" class="flex-grow-1">${item.url}</span>
+                <strong class="me-2">${escapeHtml(safe(item.method, 'ENDPOINT'))}</strong>
+                <span id="${containerId}-url-${index}" class="flex-grow-1">${escapeHtml(safe(item.url, '(no url)'))}</span>
                 <button class="btn btn-sm p-0 ms-2 btn-toggle-visibility" onclick="toggleVisibility('${containerId}-url-${index}', this.querySelector('i'))" title="Hide endpoint">
                     <i class="fas fa-eye-slash"></i>
                 </button>
@@ -86,32 +178,48 @@ function renderTests(filtered, containerId) {
 
             <div class="small mt-1">
                 <strong>Response:</strong>
-                <span class="text-muted">${item.responseCode} ${item.responseStatus} | Time: ${item.time}ms</span>
+                <span class="text-muted">${escapeHtml(safe(item.responseCode))} ${escapeHtml(safe(item.responseStatus, ''))} | Time: ${safe(item.time, 0)}ms</span>
             </div>
 
             <div class="mt-3">
                 ${(item.assertions.length > 0) ? item.assertions.map(assertion => `
                 <div class="assertion ${assertion.status}">
                     <div class="d-flex justify-content-between">
-                        <span>${assertion.name}</span>
+                        <span>${escapeHtml(safe(assertion.name, 'Unnamed assertion'))}</span>
                         <strong>${assertion.status.toUpperCase()}</strong>
                     </div>
                 </div>`).join('') : '<div class="alert alert-secondary p-2">No assertions found for this request.</div>'}
             </div>
 
-            ${hasFailed && item.responseBody ? `
-            <div class="mt-2">
-                <button class="btn btn-outline-secondary btn-sm" onclick="toggleResponseBody(this)">
-                    <i class="fas fa-code me-2"></i>Show Response Body
+            ${(item.requestBody || item.responseBody) ? `
+            <div class="mt-3">
+                <button class="btn btn-outline-primary btn-sm" onclick="openTestDetail(${item._id})">
+                    <i class="fas fa-magnifying-glass me-1"></i>View Request / Response
                 </button>
-                <div style="display:none;" class="response-body-container p-2 mt-1 rounded border">
-                    <pre class="mb-0"><code>${prettyPrintJson(item.responseBody)}</code></pre>
-                </div>
             </div>
             ` : ''}
         </div>
         `;
     }).join('');
+}
+
+// Looks up a rendered test by its stable _id (assigned once in renderReport)
+// so the detail modal works no matter which tab (all/passed/failed) the
+// click came from. Only shows the request/response bodies - status,
+// assertions, method, url, etc. are already visible on the card itself, so
+// repeating them here was pure duplication.
+function openTestDetail(id) {
+    const test = window.testsById ? window.testsById[id] : null;
+    if (!test) return;
+
+    document.getElementById('testDetailTitle').textContent = safe(test.name, 'Unnamed Request');
+
+    document.getElementById('requestBodyContent').textContent =
+        test.requestBody ? prettyPrintJson(test.requestBody) : '(no request body)';
+    document.getElementById('responseBodyContent').textContent =
+        test.responseBody ? prettyPrintJson(test.responseBody) : '(no response body)';
+
+    new bootstrap.Modal(document.getElementById('testDetailModal')).show();
 }
 
 function calculateStatus(passed, failed) {
@@ -126,64 +234,157 @@ function calculateStatus(passed, failed) {
   return { status: 'CRITICAL', severity: 'critical' };
 }
 
-function renderReport(data) {
-    const results = data.results || (data.run && data.run.executions) || [];
-
-    if (results.length === 0) {
-        alert('Could not find test results in the provided JSON. Please provide a valid Postman run report.');
-        return;
+// Postman App export ("Save as JSON" from the Collection Runner) and
+// Newman's `-r json` reporter describe the same kind of run with different
+// field names, so each gets its own extractor instead of one function
+// guessing at both shapes. Both return the same normalized object so
+// everything downstream (renderTests, KPIs, charts, the detail modal) only
+// ever has to deal with one schema.
+function extractUrl(request, fallback) {
+    if (!request || !request.url) return fallback || '';
+    const url = request.url;
+    if (typeof url === 'string') return url;
+    // Newman/Postman collection SDK url objects don't stringify usefully via
+    // template literals - use .raw, or rebuild from parts, before falling back.
+    if (url.raw) return url.raw;
+    if (Array.isArray(url.host)) {
+        const host = url.host.join('.');
+        const path = Array.isArray(url.path) ? '/' + url.path.join('/') : '';
+        return host ? `${host}${path}` : fallback || '';
     }
-      const collection = data.collection || {};
-    
-    document.getElementById('reportTitle').textContent = data.name || data.collection?.info?.name || 'Postman Test Report';
+    return fallback || '';
+}
 
-    allTests = results.map(result => {
+function extractPostmanResults(data) {
+    const results = data.results || [];
+    return results.map((result, idx) => {
         const assertionsRaw = result.assertions || result.tests || {};
         const assertions = Array.isArray(assertionsRaw)
-            ? assertionsRaw.map(a => ({ 
-                name: a.assertion || a.name || 'Unnamed assertion', 
-                status: a.error ? 'failed' : 'passed' 
-              }))
-            : Object.entries(assertionsRaw).map(([key, value]) => ({ 
-                name: key, 
-                status: value ? 'passed' : 'failed' 
-              }));
+            ? assertionsRaw.map(a => ({
+                name: a.assertion || a.name || 'Unnamed assertion',
+                status: a.error ? 'failed' : 'passed'
+            }))
+            : Object.entries(assertionsRaw).map(([key, value]) => ({
+                name: key,
+                status: value ? 'passed' : 'failed'
+            }));
 
         const request = result.request || {};
         const response = result.response || {};
-        
-// ****************************
-//         let method = (request.method || result.method || 'GET').toString().trim().toUpperCase();
-// if (method === 'REQUEST URL:') method = 'GET';
-
-// Determine method using collection reference if available, else fallback to 'ENDPOINT'
-let method = 'ENDPOINT';
-if (collection?.requests?.length) {
-    const match = collection.requests.find(req => req.id === result.id);
-    method = match?.method?.toUpperCase() || 
-             (request.method || result.method || 'ENDPOINT').toString().trim().toUpperCase();
-} else {
-    method = (request.method || result.method || 'ENDPOINT').toString().trim().toUpperCase();
-}
-if (method === 'REQUEST URL:') method = 'ENDPOINT';
-// **********************************
+        const method = (request.method || result.method || 'ENDPOINT').toString().trim().toUpperCase();
 
         return {
+            _id: idx,
             name: result.name || request.name || 'Unnamed Request',
-            url: request.url?.toString() || result.url || '',
-            method: method,
-            time: response.responseTime || result.time || 0,
-            responseCode: response.code || result.responseCode?.code || 'N/A',
-            responseStatus: response.status || result.responseCode?.name || '',
+            url: extractUrl(request, result.url),
+            method: method === 'REQUEST URL:' ? 'ENDPOINT' : method,
+            time: response.responseTime ?? result.time ?? 0,
+            responseCode: response.code ?? result.responseCode?.code ?? 'N/A',
+            responseStatus: response.status ?? result.responseCode?.name ?? '',
             assertions: assertions,
-            responseBody: response.body || result.responseBody || response.stream || ''
+            requestBody: extractRequestBody(request),
+            responseBody: decodeResponseBody(response, result)
         };
     });
+}
+
+function extractNewmanResults(data) {
+    const executions = data.run?.executions || [];
+    return executions.map((execution, idx) => {
+        // Newman lists every assertion with an `error` key only present on
+        // failures - unlike the Postman App export, it never gives clean
+        // expected/actual values, only the assertion's error message.
+        const assertionsRaw = execution.assertions || [];
+        const assertions = assertionsRaw.map(a => ({
+            name: a.assertion || 'Unnamed assertion',
+            status: a.error ? 'failed' : 'passed',
+            errorMessage: a.error?.message || null
+        }));
+
+        const request = execution.request || {};
+        const response = execution.response || {};
+        // The request/item name lives under execution.item.name in Newman's
+        // JSON reporter, not execution.name - that mismatch is what produced
+        // "Unnamed Request" for every row on a Newman upload.
+        const name = execution.item?.name || request.name || 'Unnamed Request';
+        const method = (request.method || 'ENDPOINT').toString().trim().toUpperCase();
+
+        return {
+            _id: idx,
+            name,
+            url: extractUrl(request, ''),
+            method,
+            time: response.responseTime ?? 0,
+            responseCode: response.code ?? 'N/A',
+            responseStatus: response.status ?? '',
+            assertions,
+            requestBody: extractRequestBody(request),
+            responseBody: decodeResponseBody(response, null)
+        };
+    });
+}
+
+function extractRunMeta(data, format) {
+    if (format === 'newman') {
+        return {
+            collectionName: data.collection?.info?.name || 'Untitled Collection',
+            environmentName: data.environment?.name || null,
+            runDate: data.run?.timings?.started ? new Date(data.run.timings.started).toLocaleString() : null,
+            formatLabel: 'Newman CLI'
+        };
+    }
+    if (format === 'postman') {
+        return {
+            collectionName: data.name || data.collection?.info?.name || 'Untitled Collection',
+            environmentName: data.environment?.name || null,
+            runDate: null,
+            formatLabel: 'Postman App Export'
+        };
+    }
+    return { collectionName: 'Untitled Collection', environmentName: null, runDate: null, formatLabel: 'Unknown' };
+}
+
+function renderReport(data) {
+    const format = detectReportFormat(data);
+
+    if (format === 'unknown') {
+        alert('Could not find test results in the provided JSON. Please provide a valid Postman Collection Runner export or a Newman JSON reporter output.');
+        return;
+    }
+
+    allTests = format === 'newman' ? extractNewmanResults(data) : extractPostmanResults(data);
+
+    if (allTests.length === 0) {
+        alert('The report parsed successfully but contained no requests. Please check the file and try again.');
+        return;
+    }
+
+    // Make every test look-up-able by a stable id regardless of which tab
+    // (all/passed/failed) it's rendered under - the detail modal reads
+    // from this map.
+    window.testsById = {};
+    allTests.forEach(t => { window.testsById[t._id] = t; });
+
+    const meta = extractRunMeta(data, format);
+    document.getElementById('reportTitle').textContent = meta.collectionName;
+
+    const metaBar = document.getElementById('runMetaBar');
+    if (metaBar) {
+        document.getElementById('metaFormatBadge').textContent = meta.formatLabel;
+        document.getElementById('metaEnvironmentName').textContent = meta.environmentName || 'No environment';
+        const runDateEl = document.getElementById('metaRunDate');
+        if (meta.runDate) {
+            runDateEl.textContent = meta.runDate;
+            runDateEl.parentElement.style.display = '';
+        } else {
+            runDateEl.parentElement.style.display = 'none';
+        }
+        metaBar.style.display = '';
+    }
 
     // Filter tests
     passedTests = allTests.filter(t => !t.assertions.some(a => a.status === 'failed'));
     failedTests = allTests.filter(t => t.assertions.some(a => a.status === 'failed'));
-    slowTests = allTests.filter(t => t.time > 500);
 
     // Calculate metrics
     const totalTests = allTests.length;
@@ -235,7 +436,6 @@ if (method === 'REQUEST URL:') method = 'ENDPOINT';
     renderTests(allTests, 'testResultsAll');
     renderTests(passedTests, 'testResultsPassed');
     renderTests(failedTests, 'testResultsFailed');
-    renderTests(slowTests, 'testResultsSlow');
 
     // Initialize charts
     initCharts();
@@ -356,6 +556,380 @@ function initCharts() {
         }
     } catch (error) {
         console.error('Error initializing charts:', error);
+    }
+}
+
+// Renders the report to a proper paginated PDF via html2canvas + jsPDF,
+// instead of window.print() - the browser print engine was inconsistent
+// about page breaks and cut charts/tables off mid-row across browsers.
+async function exportReportToPDF() {
+    const button = document.getElementById('exportPdfBtn');
+    const originalHtml = button.innerHTML;
+    button.disabled = true;
+    button.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Generating PDF...';
+
+    try {
+        const reportEl = document.getElementById('reportContainer');
+        const canvas = await html2canvas(reportEl, {
+            scale: 2,
+            useCORS: true,
+            backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff'
+        });
+
+        const { jsPDF } = window.jspdf;
+        const pdf = new jsPDF('p', 'pt', 'a4');
+        const pageWidth = pdf.internal.pageSize.getWidth();
+        const pageHeight = pdf.internal.pageSize.getHeight();
+        const imgWidth = pageWidth;
+        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+
+        const imgData = canvas.toDataURL('image/png');
+        let heightLeft = imgHeight;
+        let position = 0;
+
+        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+        heightLeft -= pageHeight;
+
+        while (heightLeft > 0) {
+            position -= pageHeight;
+            pdf.addPage();
+            pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+            heightLeft -= pageHeight;
+        }
+
+        pdf.save(`postman-report-${new Date().toISOString().slice(0, 10)}.pdf`);
+    } catch (err) {
+        console.error('PDF export failed:', err);
+        alert('Could not generate the PDF. Please try again.');
+    } finally {
+        button.disabled = false;
+        button.innerHTML = originalHtml;
+    }
+}
+
+// =============================================================
+// EXPORT REPORT AS STANDALONE HTML
+// =============================================================
+// - Preserves the current report HTML
+// - Embeds all linked CSS into the exported file
+// - Converts Chart.js canvases to static images
+// - Embeds test data
+// - Removes the JSON upload area
+// - Keeps the original app.js reference for functionality
+// =============================================================
+
+async function exportReportToHTML() {
+
+    const button = document.getElementById('exportHtmlBtn');
+
+    const originalHtml = button
+        ? button.innerHTML
+        : '';
+
+    try {
+
+        // ---------------------------------------------------------
+        // 1. Show export progress
+        // ---------------------------------------------------------
+
+        if (button) {
+            button.disabled = true;
+            button.innerHTML =
+                '<i class="fas fa-spinner fa-spin me-2"></i>Exporting HTML...';
+        }
+
+
+        // ---------------------------------------------------------
+        // 2. Clone the current document
+        // ---------------------------------------------------------
+
+        const docClone =
+            document.documentElement.cloneNode(true);
+
+
+        // ---------------------------------------------------------
+        // 3. Convert Chart.js canvases to images
+        // ---------------------------------------------------------
+
+        const liveCanvases = [
+            document.getElementById('responseTimeChart'),
+            document.getElementById('statusCodeChart')
+        ];
+
+        const clonedCanvases = [
+            docClone.querySelector('#responseTimeChart'),
+            docClone.querySelector('#statusCodeChart')
+        ];
+
+        liveCanvases.forEach((liveCanvas, index) => {
+
+            const clonedCanvas =
+                clonedCanvases[index];
+
+            if (!liveCanvas || !clonedCanvas) {
+                return;
+            }
+
+            try {
+
+                const img =
+                    document.createElement('img');
+
+                img.src =
+                    liveCanvas.toDataURL('image/png');
+
+                img.style.width = '100%';
+                img.style.height = 'auto';
+                img.style.display = 'block';
+
+                clonedCanvas.replaceWith(img);
+
+            } catch (error) {
+
+                console.warn(
+                    'Could not export chart:',
+                    error
+                );
+            }
+        });
+
+
+        // ---------------------------------------------------------
+        // 4. Remove elements that should not appear in report
+        // ---------------------------------------------------------
+
+        docClone
+            .querySelector('#jsonUploadArea')
+            ?.remove();
+
+
+        // ---------------------------------------------------------
+        // Remove file input
+        // ---------------------------------------------------------
+
+        docClone
+            .querySelector('#fileInput')
+            ?.remove();
+
+
+        // ---------------------------------------------------------
+        // 5. Embed ALL CSS files
+        // ---------------------------------------------------------
+
+        const stylesheetLinks =
+            Array.from(
+                docClone.querySelectorAll(
+                    'link[rel="stylesheet"]'
+                )
+            );
+
+
+        for (const link of stylesheetLinks) {
+
+            const href =
+                link.getAttribute('href');
+
+            if (!href) {
+                continue;
+            }
+
+            try {
+
+                // Convert relative CSS path to absolute URL
+                const cssUrl =
+                    new URL(
+                        href,
+                        document.baseURI
+                    ).href;
+
+
+                const response =
+                    await fetch(cssUrl);
+
+
+                if (!response.ok) {
+
+                    console.warn(
+                        `Unable to load stylesheet: ${cssUrl}`
+                    );
+
+                    continue;
+                }
+
+
+                const cssText =
+                    await response.text();
+
+
+                // Create the style element from the
+                // ORIGINAL document, not docClone.
+                const style =
+                    document.createElement('style');
+
+
+                style.setAttribute(
+                    'data-exported-from',
+                    href
+                );
+
+
+                style.textContent =
+                    `\n/* Embedded stylesheet: ${href} */\n${cssText}\n`;
+
+
+                // Replace the external <link>
+                // with the embedded <style>
+                link.replaceWith(style);
+
+
+            } catch (error) {
+
+                console.warn(
+                    `Could not embed stylesheet: ${href}`,
+                    error
+                );
+            }
+        }
+
+
+        // ---------------------------------------------------------
+        // 6. Embed test data
+        // ---------------------------------------------------------
+
+        const dataScript =
+            document.createElement('script');
+
+        dataScript.textContent = `
+window.testsById = ${JSON.stringify(
+    window.testsById || {}
+)};
+`;
+
+
+        // Find app.js
+        const appScriptTag =
+            docClone.querySelector(
+                'script[src="script/app.js"]'
+            );
+
+
+        if (appScriptTag) {
+
+            appScriptTag.parentNode.insertBefore(
+                dataScript,
+                appScriptTag
+            );
+
+        } else {
+
+            docClone
+                .querySelector('body')
+                ?.appendChild(dataScript);
+        }
+
+
+        // ---------------------------------------------------------
+        // 7. Mark report as exported
+        // ---------------------------------------------------------
+
+        const exportMarker =
+            document.createElement('meta');
+
+        exportMarker.name =
+            'report-export';
+
+        exportMarker.content =
+            'Postman/Newman HTML Report';
+
+
+        docClone
+            .querySelector('head')
+            ?.appendChild(exportMarker);
+
+
+        // ---------------------------------------------------------
+        // 8. Generate final HTML
+        // ---------------------------------------------------------
+
+        const html =
+            '<!DOCTYPE html>\n' +
+            docClone.outerHTML;
+
+
+        // ---------------------------------------------------------
+        // 9. Create downloadable file
+        // ---------------------------------------------------------
+
+        const blob =
+            new Blob(
+                [html],
+                {
+                    type: 'text/html;charset=utf-8'
+                }
+            );
+
+
+        const url =
+            URL.createObjectURL(blob);
+
+
+        const downloadLink =
+            document.createElement('a');
+
+
+        downloadLink.href =
+            url;
+
+
+        downloadLink.download =
+            `postman-report-${new Date()
+                .toISOString()
+                .slice(0, 10)}.html`;
+
+
+        document.body.appendChild(
+            downloadLink
+        );
+
+
+        downloadLink.click();
+
+
+        downloadLink.remove();
+
+
+        // Give browser time to start download
+        setTimeout(() => {
+            URL.revokeObjectURL(url);
+        }, 1000);
+
+
+    } catch (error) {
+
+        console.error(
+            'HTML export failed:',
+            error
+        );
+
+
+        alert(
+            'Could not export the HTML report. Check the browser console for details.'
+        );
+
+
+    } finally {
+
+        // ---------------------------------------------------------
+        // 10. Restore export button
+        // ---------------------------------------------------------
+
+        if (button) {
+
+            button.disabled = false;
+
+            button.innerHTML =
+                originalHtml;
+        }
     }
 }
 
