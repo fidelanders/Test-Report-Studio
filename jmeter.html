@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="author" content="Fidelis Ogbeni">
+  <meta name="description" content="Convert JMeter CSV/JTL results into a clear, decision-ready HTML report">
+  <title>JMeter CSV/JTL to HTML Report</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/themeStyles.css">
+  <link rel="stylesheet" href="css/jmeter.css">
+</head>
+<body>
+<div class="container-fluid">
+  <header class="d-flex justify-content-between align-items-center my-4 flex-wrap gap-2">
+    <div>
+      <h1 class="h3 mb-0"><i class="fas fa-gauge-high me-2 text-jm"></i>JMeter Report Generator</h1>
+      <p class="text-muted mb-0">Load, stress &amp; performance test summary</p>
+    </div>
+    <div class="d-flex align-items-center flex-wrap gap-2 no-print">
+      <button id="newBtn" class="btn btn-outline-secondary d-none"><i class="fas fa-rotate-left me-2"></i>New report</button>
+      <span id="exportBtns" class="d-none">
+        <button id="exportPdfBtn" class="btn btn-primary me-2"><i class="fas fa-file-pdf me-2"></i>Export PDF</button>
+        <button id="exportHtmlBtn" class="btn btn-outline-primary me-2"><i class="fas fa-file-code me-2"></i>Export JSON</button>
+      </span>
+      <div class="theme-toggle">
+        <button class="btn btn-outline-secondary theme-btn active" onclick="switchTheme('light')" title="Light theme"><i class="fas fa-sun"></i></button>
+        <button class="btn btn-outline-secondary theme-btn" onclick="switchTheme('dark')" title="Dark theme"><i class="fas fa-moon"></i></button>
+      </div>
+    </div>
+  </header>
+
+  <div id="runMetaBar" class="run-meta-bar mb-3" style="display:none">
+    <span class="run-meta-item"><i class="fas fa-file-csv me-1"></i><span id="metaFile"></span></span>
+    <span class="run-meta-item"><i class="fas fa-flask me-1"></i><span id="metaType"></span></span>
+    <span class="run-meta-item"><i class="fas fa-database me-1"></i><span id="metaRows"></span></span>
+  </div>
+
+  <section class="summary-card mb-3 no-print" id="setup">
+    <h4 class="summary-card-title"><i class="fas fa-sliders me-2"></i>Test settings</h4>
+    <div class="settings-grid">
+      <div><label for="type">Test type</label><select id="type" class="form-select form-select-sm"><option value="auto">Auto-detect</option><option value="load">Load</option><option value="stress">Stress</option><option value="spike">Spike</option><option value="soak">Soak</option><option value="performance">Performance / Baseline</option></select></div>
+      <div><label for="tErr">Max error rate (%)</label><input id="tErr" type="number" class="form-control form-control-sm" value="1" step="0.1" min="0" max="100"></div>
+      <div><label for="tWarn">Warning error rate (%)</label><input id="tWarn" type="number" class="form-control form-control-sm" value="5" step="0.1" min="0" max="100"></div>
+      <div><label for="tP95">Max p95 (ms)</label><input id="tP95" type="number" class="form-control form-control-sm" value="800" min="0"></div>
+      <div><label for="tP99">Max p99 (ms)</label><input id="tP99" type="number" class="form-control form-control-sm" value="1500" min="0"></div>
+      <div><label for="tRps">Min throughput (req/s)</label><input id="tRps" type="number" class="form-control form-control-sm" placeholder="optional" min="0"></div><div><label for="tRecovery">Max recovery (sec)</label><input id="tRecovery" type="number" class="form-control form-control-sm" value="120" min="0"></div>
+    </div>
+    <small class="text-muted d-block mt-2">Verdicts use error rate, p95 and p99; throughput is optional. Load/soak use explicit acceptance thresholds. Stress finds the degradation/breaking point rather than treating the breaking point itself as a failure. Spike also checks recovery after the surge. Defaults follow the selected test type; edit a value to override.</small>
+  </section>
+
+  <div id="out" hidden></div>
+
+  <section class="json-upload-area text-center mt-4 no-print" id="drop">
+    <i class="fas fa-file-upload display-4 text-muted mb-3"></i>
+    <h5 class="mb-2">Drag &amp; Drop JMeter CSV / JTL File Here</h5>
+    <p class="text-muted mb-0">or click to browse files (results saved as CSV with a header row)</p>
+    <input type="file" id="file" accept=".csv,.jtl,.txt" class="d-none" alt="Upload JMeter CSV or JTL file">
+  </section>
+  <div class="progress mt-3 d-none" id="progWrap" style="height:8px"><div class="progress-bar" id="prog" style="width:0%;background:var(--postman-orange)"></div></div>
+  <div id="msg" class="alert alert-danger mt-3 d-none" role="alert"></div>
+
+  <footer class="footer mt-5 py-4 no-print">
+    <div class="container"><div class="row align-items-center">
+      <div class="col-md-6 text-center text-md-start mb-3 mb-md-0">
+        <p class="mb-1"><img src="./assets/logo.png" alt="Fidelis Ogbeni Logo" width="20" height="20" style="border-radius:50%;margin-right:6px">Built with <i class="fas fa-heart text-danger"></i> and <i class="fas fa-coffee"></i> by <strong>Fidelis Ogbeni</strong></p>
+        <p class="mb-0 text-muted small">JMeter CSV/JTL to HTML Report Tool <i class="fas fa-rocket" style="color:var(--postman-orange)"></i></p>
+      </div>
+      <div class="col-md-6 text-center text-md-end">
+        <a href="https://github.com/fidelanders" target="_blank" rel="noopener noreferrer" class="text-muted me-3" title="GitHub"><i class="fab fa-github fa-lg"></i></a>
+        <a href="https://linkedin.com/in/fidelisogbeni" target="_blank" rel="noopener noreferrer" class="text-muted me-3" title="LinkedIn"><i class="fab fa-linkedin fa-lg"></i></a>
+        <a href="mailto:fidelanders@gmail.com" class="text-muted" title="Email"><i class="fas fa-envelope fa-lg"></i></a>
+        <div class="mt-2"><small class="text-muted">© <span id="currentYear"></span> All Rights Reserved</small></div>
+      </div>
+    </div></div>
+  </footer>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="script/theme.js"></script>
+<script>
+
+const LOG = Math.log(1.01), bk = v => Math.round(Math.log(v + 1) / LOG), bv = i => Math.exp(i * LOG) - 1;
+const pct = (h, n, p) => { let s = 0; for (const i of Object.keys(h).map(Number).sort((a, b) => a - b)) { s += h[i]; if (s >= n * p) return bv(i); } return 0; };
+const ALIAS = { ts: ['timeStamp', 'timestamp'], el: ['elapsed'], lb: ['label'], ok: ['success'], cd: ['responseCode'], ms: ['failureMessage', 'responseMessage'], users: ['allThreads'], mt: ['method', 'httpMethod', 'sampleMethod'] };
+const mk = () => ({ n: 0, f: 0, s: 0, mn: 1e12, mx: 0, h: {}, e: {} });
+const add = (o, el, ok, key) => { o.n++; o.s += el; if (el < o.mn) o.mn = el; if (el > o.mx) o.mx = el; const b = bk(el); o.h[b] = (o.h[b] || 0) + 1; if (!ok) { o.f++; if (key) o.e[key] = (o.e[key] || 0) + 1; } };
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const fmtT = s => s >= 60 ? Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's' : Math.round(s) + 's';
+const av = a => a.reduce((x, b) => x + b.s, 0) / Math.max(1, a.reduce((x, b) => x + b.n, 0));
+let R = null, charts = [], sk = 'st', touched = false;
+// Pass criteria follow the test type; typing in a field overrides them until the type changes.
+const PRESET = { load: { err: 1, warnErr: 5, p95: 800, p99: 1500 }, stress: { err: 5, warnErr: 10, p95: 2000, p99: 3000 }, spike: { err: 2, warnErr: 5, p95: 1500, p99: 2500 }, soak: { err: 1, warnErr: 5, p95: 800, p99: 1500 }, performance: { err: 1, warnErr: 5, p95: 500, p99: 1000 } };
+let METH = {};
+const disp = lb => { const m = METH[lb]; return m && !lb.toUpperCase().startsWith(m) ? m + ' ' + lb : lb; };
+
+function fail(m) { $('msg').textContent = m; $('msg').classList.remove('d-none'); $('progWrap').classList.add('d-none'); }
+
+function parse(file) {
+  $('msg').classList.add('d-none'); $('progWrap').classList.remove('d-none'); $('prog').style.width = '0%'; $('out').hidden = true;
+  const T = mk(), L = {}, B = {}, slow = []; METH = {};
+  let col = null, first = 1e15, last = 0, skip = 0, rows = 0, minSlow = 0, aborted = false;
+  Papa.parse(file, {
+    header: true, skipEmptyLines: true, worker: true, chunkSize: 2097152,
+    chunk(res, p) {
+      if (aborted) return;
+      if (!col) {
+        const f = res.meta.fields || []; col = {};
+        for (const k in ALIAS) col[k] = f.find(x => ALIAS[k].includes(x.replace(/^\uFEFF/, '').trim()));
+        const miss = ['ts', 'el', 'lb', 'ok'].filter(k => !col[k]);
+        if (miss.length) { aborted = true; p.abort(); return fail('This does not look like a JMeter CSV with a header row (missing: ' + miss.join(', ') + '). Save results as CSV with the default header line.'); }
+      }
+      for (const r of res.data) {
+        let ts = +r[col.ts]; if (isNaN(ts)) ts = Date.parse(r[col.ts]);
+        const el = +r[col.el];
+        if (isNaN(ts) || isNaN(el)) { skip++; continue; }
+        rows++;
+        const ok = String(r[col.ok]).toLowerCase() === 'true', lb = r[col.lb] || '(no label)';
+        const err = ok ? null : ((col.cd && r[col.cd]) || '?') + ' · ' + String((col.ms && r[col.ms]) || '').slice(0, 80), key = ok ? null : lb + '\u0001' + err;
+        if (col.mt && r[col.mt] && !METH[lb]) METH[lb] = String(r[col.mt]).toUpperCase();
+        add(T, el, ok, key); add(L[lb] || (L[lb] = mk()), el, ok, key);
+        if (ts < first) first = ts; if (ts + el > last) last = ts + el;
+        const s = Math.floor(ts / 1000), b = B[s] || (B[s] = { n: 0, f: 0, s: 0, users: 0 });
+        b.n++; b.s += el; if (!ok) b.f++;
+        const users = col.users ? +r[col.users] : 0; if (users > b.users) b.users = users;
+        if (el > minSlow) { slow.push({ lb, el, ts }); if (slow.length >= 40) { slow.sort((a, b) => b.el - a.el); slow.length = 20; minSlow = slow[19].el; } }
+      }
+      $('prog').style.width = Math.min(99, (res.meta.cursor / file.size) * 100) + '%';
+    },
+    complete() { if (aborted) return; if (!rows) return fail('No valid samples found in this file.'); finish(T, L, B, slow, first, last, rows, skip, file.name); },
+    error: e => fail(e.message || String(e))
+  });
+}
+
+function finish(T, L, B, slow, first, last, rows, skip, name) {
+  const dur = Math.max((last - first) / 1000, 1), ks = Object.keys(B).map(Number);
+  let k0 = Infinity, k1 = -Infinity; ks.forEach(k => { if (k < k0) k0 = k; if (k > k1) k1 = k; });
+  const w = Math.max(1, Math.ceil((k1 - k0 + 1) / 100)), sp = [];
+  for (const k of ks) { const i = Math.floor((k - k0) / w), b = B[k], t = sp[i] || (sp[i] = { n: 0, f: 0, s: 0, users: 0, h: {} }); t.n += b.n; t.f += b.f; t.s += b.s; if (b.users > t.users) t.users = b.users; for (const [bin,count] of Object.entries(b.h || {})) t.h[bin] = (t.h[bin] || 0) + count; }
+  const tl = Array.from(sp, t => t || { n: 0, f: 0, s: 0, users: 0, h: {} });
+  const bucketPct = (b,p) => { const n=b.n||0; let s=0; for (const i of Object.keys(b.h||{}).map(Number).sort((a,c)=>a-c)) { s += b.h[i]; if (s >= n*p) return bv(i); } return 0; };
+  tl.forEach(b => { b.p95 = bucketPct(b,.95); b.p99 = bucketPct(b,.99); });
+  const sum = o => { const c = p => Math.min(o.mx, pct(o.h, o.n, p)); return { n: o.n, f: o.f, er: o.f / o.n, avg: o.s / o.n, mn: o.mn, mx: o.mx, p90: c(.9), p95: c(.95), p99: c(.99), rps: o.n / dur, top: Object.entries(o.e).sort((a, b) => b[1] - a[1]).slice(0, 10) }; };
+  R = { name, rows, skip, dur, w, tl, tot: sum(T), items: Object.entries(L).map(([k, o]) => ({ name: k, ...sum(o) })), slow: slow.sort((a, b) => b.el - a.el).slice(0, 20) };
+  R.detected = detect(tl); R.peakUsers = tl.reduce((m, b) => Math.max(m, b.users), 0);
+  $('progWrap').classList.add('d-none'); $('drop').classList.add('d-none'); $('newBtn').classList.remove('d-none'); render();
+}
+
+function detect(tl) {
+  const series = tl.map(t => t.users), n = series.length, peak = Math.max(...series);
+  if (peak <= 1) return 'performance';
+  const q = Math.max(1, n >> 2), avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+  const median = [...series].sort((a, b) => a - b)[n >> 1];
+  if (peak >= 3 * median && series.filter(x => x >= peak * .5).length / n < .25) return 'spike';
+  if (avg(series.slice(0, q)) <= peak * .4 && avg(series.slice(-q)) >= peak * .85 && series.filter(x => x >= peak * .9).length / n < .3) return 'stress';
+  return 'load';
+}
+
+function render() {
+  if (!R) return;
+  const t = R.tot, tl = R.tl;
+  const auto = $('type').value === 'auto', ty = auto ? R.detected : $('type').value;
+  if (!touched) { const P = PRESET[ty]; $('tErr').value = P.err; $('tWarn').value = P.warnErr; $('tP95').value = P.p95; $('tP99').value = P.p99; }
+  const num = (id, d) => { const v = parseFloat($(id).value); return isNaN(v) ? d : v; }, P0 = PRESET[ty];
+  const errL = num('tErr', P0.err), warnErr = Math.max(errL, num('tWarn', P0.warnErr)), p95L = num('tP95', P0.p95), p99L = num('tP99', P0.p99), rL = num('tRps', 0), recoveryL = Math.max(0, num('tRecovery', 120));
+  const errorPct = t.er * 100;
+  const firstQ = tl.slice(0, Math.max(1, Math.ceil(tl.length * .1)));
+  const lastQ = tl.slice(Math.max(0, tl.length - Math.max(1, Math.ceil(tl.length * .1))));
+  const baseAvg = av(firstQ), endAvg = av(lastQ);
+  const baseP95 = firstQ.length ? firstQ.reduce((x,b) => x + (b.p95 || 0) * b.n, 0) / Math.max(1, firstQ.reduce((x,b)=>x+b.n,0)) : 0;
+  const endP95 = lastQ.length ? lastQ.reduce((x,b) => x + (b.p95 || 0) * b.n, 0) / Math.max(1, lastQ.reduce((x,b)=>x+b.n,0)) : 0;
+  const driftPct = baseP95 ? ((endP95 - baseP95) / baseP95) * 100 : 0;
+  const spikePeak = tl.reduce((m, b, i) => b.users > (tl[m]?.users || 0) ? i : m, 0);
+  const spikeBase = baseP95;
+  const recoveryIndex = tl.findIndex((b, i) => i > spikePeak && b.n && (b.p95 || 0) <= 1.2 * spikeBase);
+  const recoverySec = recoveryIndex < 0 ? null : (recoveryIndex - spikePeak) * R.w;
+  let rules = [];
+  if (ty === 'stress') {
+    const breakIndex = tl.findIndex(b => b.n && (b.f / b.n) * 100 > warnErr);
+    const degradationIndex = tl.findIndex(b => b.n && ((b.f / b.n) * 100 > errL || b.s / b.n > p95L));
+    const bi = breakIndex >= 0 ? breakIndex : degradationIndex;
+    rules = [
+      { name: 'Pre-break error rate', val: errorPct.toFixed(2) + '%', lim: 'observe degradation / breaking point', s: 'pass' },
+      { name: 'Breaking point', val: bi >= 0 ? ((tl[bi].users || '?') + ' users') : 'Not reached', lim: 'capacity discovery', s: 'pass' }
+    ];
+  } else {
+    rules = [
+      { name: 'Error rate', val: errorPct.toFixed(2) + '%', lim: 'pass ≤ ' + errL + '% · warn ≤ ' + warnErr + '%', s: errorPct <= errL ? 'pass' : errorPct <= warnErr ? 'warn' : 'fail' },
+      { name: 'p95', val: Math.round(t.p95) + ' ms', lim: 'pass ≤ ' + p95L + ' ms · warn ≤ ' + Math.round(p95L * 1.5) + ' ms', s: t.p95 <= p95L ? 'pass' : t.p95 <= p95L * 1.5 ? 'warn' : 'fail' },
+      { name: 'p99', val: Math.round(t.p99) + ' ms', lim: 'pass ≤ ' + p99L + ' ms · warn ≤ ' + Math.round(p99L * 1.5) + ' ms', s: t.p99 <= p99L ? 'pass' : t.p99 <= p99L * 1.5 ? 'warn' : 'fail' }
+    ];
+    if (rL > 0) rules.push({ name: 'Throughput', val: t.rps.toFixed(1) + ' req/s', lim: 'pass ≥ ' + rL + ' · warn ≥ ' + (rL * .9).toFixed(1), s: t.rps >= rL ? 'pass' : t.rps >= rL * .9 ? 'warn' : 'fail' });
+    if (ty === 'spike') rules.push({ name: 'Recovery', val: recoverySec === null ? 'Not recovered' : fmtT(recoverySec), lim: '≤ ' + fmtT(recoveryL) + ' and ≤120% baseline p95', s: recoverySec === null ? 'fail' : recoverySec <= recoveryL ? 'pass' : 'warn' });
+    if (ty === 'soak') rules.push({ name: 'Latency drift', val: driftPct.toFixed(1) + '%', lim: 'pass ≤ 20% · warn ≤ 30%', s: driftPct <= 20 ? 'pass' : driftPct <= 30 ? 'warn' : 'fail' });
+  }
+  const st = rules.some(r => r.s === 'fail') ? 'fail' : rules.some(r => r.s === 'warn') ? 'warn' : 'pass';
+  let note = '';
+  if (ty === 'stress') { const i = tl.findIndex(b => b.n && ((b.f / b.n) * 100 > warnErr || b.s / b.n > p95L)); note = i < 0 ? 'No degradation threshold was crossed in this run; continue increasing load in a controlled stress test to find the capacity boundary.' : 'Degradation point: approximately ' + (tl[i].users || '?') + ' users, ' + fmtT(i * R.w) + ' into the test. Stress testing is treated as capacity discovery, not a normal pass/fail load gate.'; }
+  if (ty === 'spike') { note = recoverySec === null ? 'Response time did not recover to ≤120% of baseline p95.' : 'Recovered to ≤120% of baseline p95 (~' + Math.round(spikeBase) + ' ms) in ' + fmtT(recoverySec) + ' after peak load; target is ≤' + fmtT(recoveryL) + '.'; }
+  if (ty === 'soak') { note = 'Latency drift uses p95 response time, comparing the first 10% of the run with the last 10%. CPU, memory and connection-pool trends require JMeter/backend monitoring data and are not inferred from this CSV.'; }
+  if (st === 'warn') note += (note ? ' ' : '') + 'Fix the flagged issues and re-run the test.';
+  R.items.forEach(i => { const er = i.er * 100; i.s = ty === 'stress' ? (er > warnErr || i.p95 > p95L * 1.5 ? 'fail' : er > errL || i.p95 > p95L ? 'warn' : 'pass') : (er <= errL && i.p95 <= p95L && i.p99 <= p99L ? 'pass' : er <= warnErr && i.p95 <= p95L * 1.5 && i.p99 <= p99L * 1.5 ? 'warn' : 'fail'); });
+  const rk = { fail: 0, warn: 1, pass: 2 }, val = (i, k) => k === 'st' ? rk[i.s] : i[k];
+  const items = [...R.items].sort((a, b) => sk === 'name' || sk === 'st' ? (val(a, sk) > val(b, sk) ? 1 : val(a, sk) < val(b, sk) ? -1 : b.er - a.er) : val(b, sk) - val(a, sk));
+  const kpi = (icon, cls, v, l, tip) => '<div class="kpi-card"><div class="kpi-icon ' + cls + '"><i class="fas fa-' + icon + '"></i></div><div class="kpi-content"><h3>' + l + '</h3><div class="kpi-value">' + v + '</div><div class="kpi-tooltip">' + tip + '</div></div></div>';
+  const th = (k, l) => '<th data-k="' + k + '"' + (k === 'name' ? ' style="text-align:left"' : '') + '>' + l + (sk === k ? ' <i class="fas fa-caret-down"></i>' : '') + '</th>';
+  const sev = { pass: 'success', warn: 'warning', fail: 'danger' }, word = { pass: 'PASSED', warn: 'WARNING · FIX &amp; RE-RUN', fail: 'FAILED' };
+  $('metaFile').textContent = R.name; $('metaType').textContent = ty + ' test' + (auto ? ' (auto-detected)' : ''); $('metaRows').textContent = R.rows.toLocaleString() + ' samples'; $('runMetaBar').style.display = '';
+  $('out').innerHTML =
+    '<section class="overall-status ' + st + ' mb-4"><div><div class="overall-status-main"><span class="badge status-' + sev[st] + '">' + word[st] + '</span><span>' + ty[0].toUpperCase() + ty.slice(1) + ' test · ' + fmtT(R.dur) + '</span></div>' +
+    '<div class="chip-row">' + rules.map(r => '<span class="badge pill-' + r.s + '">' + r.name + ' ' + r.val + ' (' + r.lim + ')</span>').join('') + '</div>' +
+    (note ? '<div class="text-muted small mt-2"><i class="fas fa-circle-info me-1"></i>' + note + '</div>' : '') + (R.skip ? '<div class="text-muted small mt-1">' + R.skip + ' unreadable rows were skipped.</div>' : '') + '</div></section>' +
+    '<section class="kpi-grid">' + kpi('sync-alt', 'bg-primary', t.n.toLocaleString(), 'Total Requests', 'Samples in the file') + kpi('triangle-exclamation', t.er > 0 ? 'bg-danger' : 'bg-success', (t.er * 100).toFixed(2) + '%', 'Error Rate', t.f.toLocaleString() + ' failed samples') +
+    kpi('clock', 'bg-info', Math.round(t.avg) + 'ms', 'Avg Response Time', 'Mean of all samples') + kpi('gauge-high', 'bg-warning', Math.round(t.p95) + 'ms', 'p95 Response Time', '95% of requests were faster') +
+    kpi('bolt', 'bg-primary', Math.round(t.p99) + 'ms', 'p99 Response Time', 'Slowest 1% start here') + kpi('arrow-trend-up', 'bg-success', t.rps.toFixed(1) + '/s', 'Throughput', 'Requests per second') +
+    kpi('users', 'bg-info', R.peakUsers || 'n/a', 'Peak Users', 'Most active users at once') + kpi('hourglass-half', 'bg-warning', fmtT(R.dur), 'Test Duration', 'First to last sample') + '</section>' +
+    '<div class="row mb-4"><div class="col-lg-6 mb-3 mb-lg-0"><div class="chart-card"><h4 class="summary-card-title"><i class="fas fa-chart-line me-2"></i>Response Time &amp; Errors</h4><div class="chart-container"><canvas id="c1"></canvas></div></div></div>' +
+    '<div class="col-lg-6"><div class="chart-card"><h4 class="summary-card-title"><i class="fas fa-users me-2"></i>Throughput &amp; Users</h4><div class="chart-container"><canvas id="c2"></canvas></div></div></div></div>' +
+    '<div class="summary-card mb-4"><h4 class="summary-card-title"><i class="fas fa-list-check me-2"></i>Endpoints</h4><div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr>' + th('name', 'Label') + th('n', 'Requests') + th('er', 'Error %') + th('avg', 'Avg ms') + th('p95', 'p95') + th('p99', 'p99') + th('mx', 'Max') + th('rps', 'Req/s') + th('st', 'Status') + '</tr></thead><tbody>' +
+    items.map(i => '<tr><td class="lbl">' + esc(i.name) + '</td><td>' + i.n.toLocaleString() + '</td><td>' + (i.er * 100).toFixed(2) + '</td><td>' + Math.round(i.avg) + '</td><td>' + Math.round(i.p95) + '</td><td>' + Math.round(i.p99) + '</td><td>' + i.mx + '</td><td>' + i.rps.toFixed(1) + '</td><td><span class="badge pill-' + i.s + '">' + i.s.toUpperCase() + '</span></td></tr>').join('') + '</tbody></table></div></div>' +
+    '<div class="row"><div class="col-lg-6 mb-3"><div class="summary-card"><h4 class="summary-card-title"><i class="fas fa-circle-xmark me-2"></i>What Failed</h4><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th style="text-align:left">Endpoint</th><th style="text-align:left">Error</th><th class="text-end">Failures</th></tr></thead><tbody>' + (t.top.length ? t.top.map(([k, c]) => { const [lb, er] = k.split('\u0001'); return '<tr><td class="lbl">' + esc(disp(lb)) + '</td><td class="lbl">' + esc(er) + '</td><td class="text-end">' + c.toLocaleString() + '</td></tr>'; }).join('') : '<tr><td colspan="3">No errors 🎉</td></tr>') + '</tbody></table></div></div></div>' +
+    '<div class="col-lg-6 mb-3"><div class="summary-card"><h4 class="summary-card-title"><i class="fas fa-hourglass-end me-2"></i>Slowest Requests</h4><table class="table table-sm mb-0">' + R.slow.slice(0, 10).map(s => '<tr><td class="lbl">' + esc(disp(s.lb)) + '</td><td class="text-end">' + s.el.toLocaleString() + ' ms</td></tr>').join('') + '</table></div></div></div>';
+  $('out').hidden = false;
+  charts.forEach(c => c.destroy());
+  const lb = tl.map((_, i) => fmtT(i * R.w)), o = (a, b) => ({ responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { title: { display: true, text: a } }, y1: { position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: b } } } });
+  charts = [
+    new Chart($('c1'), { type: 'line', data: { labels: lb, datasets: [{ label: 'Avg response (ms)', data: tl.map(b => b.n ? b.s / b.n : null), borderColor: '#8E44AD', tension: .25, pointRadius: 0, yAxisID: 'y' }, { type: 'bar', label: 'Errors', data: tl.map(b => b.f), backgroundColor: '#dc2626', yAxisID: 'y1' }] }, options: o('ms', 'errors') }),
+    new Chart($('c2'), { type: 'line', data: { labels: lb, datasets: [{ label: 'Throughput (req/s)', data: tl.map(b => b.n / R.w), borderColor: '#16a34a', tension: .25, pointRadius: 0, yAxisID: 'y' }, { label: 'Active users', data: tl.map(b => b.users), borderColor: '#d63384', pointRadius: 0, yAxisID: 'y1' }] }, options: o('req/s', 'users') })
+  ];
+  $('exportBtns').classList.remove('d-none');
+  $('exportPdfBtn').onclick = () => window.print();
+  $('exportHtmlBtn').onclick = () => {
+    const b = new Blob([JSON.stringify({ source: R.name, testType: ty, verdict: { status: st, rules, criteria: { maxErrorRatePercent: errL, warningErrorRatePercent: warnErr, maxP95Ms: p95L, maxP99Ms: p99L, minThroughput: rL || null, maxRecoverySeconds: recoveryL }, notes: note }, peakUsers: R.peakUsers, totals: t, endpoints: R.items }, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'jmeter-summary.json'; a.click();
+  };
+}
+
+$('out').onclick = e => { const k = e.target.dataset && e.target.dataset.k; if (k) { sk = k; render(); } };
+$('type').addEventListener('input', () => { touched = false; render(); });
+['tErr', 'tWarn', 'tP95', 'tP99'].forEach(id => $(id).addEventListener('input', () => { touched = true; render(); }));
+$('tRps').addEventListener('input', render);
+$('drop').onclick = () => $('file').click();
+$('file').onchange = e => e.target.files[0] && parse(e.target.files[0]);
+$('drop').ondragover = e => { e.preventDefault(); $('drop').classList.add('over'); };
+$('drop').ondragleave = () => $('drop').classList.remove('over');
+$('newBtn').onclick = () => location.reload();
+$('drop').ondrop = e => { e.preventDefault(); $('drop').classList.remove('over'); e.dataTransfer.files[0] && parse(e.dataTransfer.files[0]); };
+
+// Print / Save as PDF: swap charts for sharp full-width images so nothing is cut off on any paper size.
+let prevTheme = null;
+window.addEventListener('beforeprint', () => {
+  if (!R) return;
+  const h = document.documentElement; prevTheme = h.getAttribute('data-bs-theme'); h.setAttribute('data-bs-theme', 'light'); h.classList.add('printing');
+  charts.forEach(c => { try {
+    c.resize(1000, 380);
+    const img = new Image(); img.className = 'print-img'; img.alt = ''; img.src = c.toBase64Image();
+    const box = c.canvas.parentNode; box.appendChild(img); box.classList.add('has-img');
+  } catch (e) {} });
+});
+window.addEventListener('afterprint', () => {
+  const h = document.documentElement; h.classList.remove('printing');
+  if (prevTheme) h.setAttribute('data-bs-theme', prevTheme);
+  document.querySelectorAll('.print-img').forEach(i => i.remove());
+  document.querySelectorAll('.has-img').forEach(b => b.classList.remove('has-img'));
+  charts.forEach(c => { try { c.resize(); } catch (e) {} });
+});
+document.getElementById('currentYear').textContent = new Date().getFullYear();
+</script>
+<script src="script/report-types.js"></script>
+</body>
+</html>

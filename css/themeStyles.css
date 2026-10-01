@@ -1,6 +1,6 @@
 /* Base Light Theme */
 :root {
-  --bg: #f8f9fa;
+  --bg: #fff;
   --card-bg: #ffffff;
   --text: #212529;
   --muted: #6c757d;
@@ -15,7 +15,7 @@
   --bg: #121212;
   --card-bg: #1e1e1e;
   --text: #f1f1f1;
-  --muted: #aaaaaa !;
+  --muted: #aaaaaa;
   --border: #444444;
   --primary: #FF8C66;
   --header-bg: #1a1a1a;

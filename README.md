@@ -1,6 +1,6 @@
-# 🧪 Postman JSON to HTML Reporting Tool
+# 🧪 API Test & Performance Reporting Tool
 
-A lightweight and user-friendly reporting tool that converts Postman test results (in JSON format) into a clean, visually appealing HTML dashboard with options to download reports as PDF. Built for QA engineers and developers who want to present test results in a clear, shareable format.
+A lightweight reporting tool for turning Postman JSON and JMeter CSV/JTL results into clean, decision-ready HTML dashboards with PDF/JSON export. Built for QA engineers and developers who want to present test results in a clear, shareable format.
 
 ## 🚀 Project Overview
 
@@ -16,7 +16,26 @@ This project was born out of the need for better visibility and presentation of 
 - 📄 **PDF Export**: One-click PDF download functionality.
 - 🌐 **Mobile-Friendly**: Responsive layout for seamless use on all screen sizes.
 - 🎨 **Customizable Themes** *(Upcoming)*: Change color schemes and branding styles.
+- 🏠 **Home Page**: Choose between the Postman and JMeter reports.
+- ⚡ **JMeter CSV/JTL Reports**: Configurable load, stress, spike, soak and baseline/performance analysis with error-rate, p95, p99, throughput, recovery and latency-drift logic.
 - 📊 **Visual Breakdown**: Success/failure rate, error logs, and test durations visualized with charts.
+
+
+### JMeter performance verdict model
+
+The JMeter report uses the same test data/script as the source of truth, but each test type applies a different workload interpretation and acceptance model:
+
+| Test type | Primary purpose | Key verdict logic |
+|---|---|---|
+| Load | Validate expected peak traffic | Error rate, p95, p99 and optional throughput thresholds |
+| Stress | Find degradation/breaking point | Progressive load analysis; identifies the first degradation boundary rather than treating the boundary itself as a normal failure |
+| Spike | Validate sudden surge resilience | Error rate, p95, p99 and recovery to ≤120% of baseline |
+| Soak | Detect time-dependent degradation | Error rate, p95, p99 and latency drift between the first and last 10% of the run |
+| Performance / Baseline | Establish normal behaviour | Configurable error, p95, p99 and optional throughput thresholds |
+
+The report does **not** infer CPU, memory, database connection-pool or other infrastructure metrics from JMeter CSV/JTL data. Those should be supplied through backend/monitoring integrations when available.
+
+A single baseline run is useful for establishing reference performance, but it should not be treated as proof of load, stress, spike and soak behaviour. The same JMeter script can be reused across all four test types while changing the workload profile, duration and acceptance criteria. Each test type should have its own execution/result because each answers a different performance question.
 
 ## 🛠️ Tech Stack
 
@@ -66,19 +85,37 @@ You can host this tool on:
    ```
 ⚠️ Ensure CORS and local file access permissions are set if deploying to a strict host.
 
-📂 File Structure
-css
+## 📂 File Structure
+
 ```
-postman-html-reporter/
-├── index.html
-├── styles/
-│   └── main.css
-├── scripts/
-│   └── app.js
-├── assets/
-│   └── logo.png
+postman-html-report/
+├── index.html          # Home page (choose a report type)
+├── postman.html        # Postman JSON report
+├── jmeter.html         # JMeter CSV/JTL report
+├── css/
+│   ├── styles.css      # Shared components
+│   ├── themeStyles.css # Light/dark theme
+│   ├── home.css        # Home page
+│   └── jmeter.css      # JMeter purple theme
+├── script/
+│   ├── app.js          # Postman report logic
+│   ├── theme.js        # Shared theme switcher
+│   └── report-types.js # Report-type registry and selector bar
+├── assets/logo.png
 └── README.md
 ```
+
+## 🧠 Performance test model
+
+The JMeter report intentionally separates the **base/baseline run** from the four workload types. A baseline run establishes reference behaviour; it cannot by itself prove load, stress, spike and soak behaviour. The same reusable JMeter test plan can be executed with different workload profiles:
+
+- **Load:** expected/peak traffic against SLA thresholds.
+- **Stress:** progressively increase load to discover degradation and capacity boundaries.
+- **Spike:** introduce a sudden traffic surge and verify recovery to ≤120% of baseline p95 within the configured recovery window.
+- **Soak:** sustain load for an extended period and measure p95 latency drift between the first and last 10%.
+
+This means the project follows a **one reusable test framework + multiple workload profiles** model rather than treating one run as evidence for every performance test type.
+
 ## 📸 Sample Screenshots
 
 Main dashboard showing test summary

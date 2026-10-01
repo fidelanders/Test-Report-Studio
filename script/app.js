@@ -222,17 +222,42 @@ function openTestDetail(id) {
     new bootstrap.Modal(document.getElementById('testDetailModal')).show();
 }
 
-function calculateStatus(passed, failed) {
+// Overall run status, computed from the real assertion counts of the loaded run.
+// Both cut-offs are user-adjustable (saved in this browser), so the verdict follows
+// the team's own standard for the test instead of a fixed 5% / 20%.
+function calculateStatus(passed, failed, warnBelow = 5, criticalFrom = 20) {
   const total = passed + failed;
-  if (total === 0) return { status: 'NO DATA', severity: 'muted' };
-  if (failed === 0) return { status: 'PASS', severity: 'success' };
-  
-  const failureRate = (failed / total) * 100;
-  
-  if (failureRate < 5) return { status: 'WARNING', severity: 'warning' };
-  if (failureRate < 20) return { status: 'FAIL', severity: 'danger' };
-  return { status: 'CRITICAL', severity: 'critical' };
+  if (total === 0) return { status: 'NO DATA', severity: 'muted', rate: 0 };
+  const rate = (failed / total) * 100;
+  if (failed === 0) return { status: 'PASS', severity: 'success', rate };
+  if (rate < warnBelow) return { status: 'WARNING', severity: 'warning', rate };
+  if (rate < criticalFrom) return { status: 'FAIL', severity: 'danger', rate };
+  return { status: 'CRITICAL', severity: 'critical', rate };
 }
+
+let lastCounts = { passed: 0, failed: 0 };
+function loadThreshold(key, fallback) {
+  try { const v = parseFloat(localStorage.getItem(key)); return isNaN(v) ? fallback : v; } catch (e) { return fallback; }
+}
+function updateOverallStatus() {
+  const warnEl = document.getElementById('warnBelow'), critEl = document.getElementById('criticalFrom');
+  const warnBelow = parseFloat(warnEl.value), criticalFrom = parseFloat(critEl.value);
+  const st = calculateStatus(lastCounts.passed, lastCounts.failed,
+    isNaN(warnBelow) ? 5 : warnBelow, isNaN(criticalFrom) ? 20 : criticalFrom);
+  const badge = document.getElementById('overallStatusBadge');
+  badge.textContent = st.status;
+  badge.className = 'badge status-' + st.severity;
+  document.getElementById('overallStatusText').textContent = st.status === 'NO DATA'
+    ? 'No assertions found in this run.'
+    : `${lastCounts.failed} of ${lastCounts.passed + lastCounts.failed} assertions failed (${st.rate.toFixed(1)}%)`;
+  document.getElementById('overallStatus').style.display = '';
+  try { localStorage.setItem('warnBelow', warnEl.value); localStorage.setItem('criticalFrom', critEl.value); } catch (e) {}
+}
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('warnBelow').value = loadThreshold('warnBelow', 5);
+  document.getElementById('criticalFrom').value = loadThreshold('criticalFrom', 20);
+  ['warnBelow', 'criticalFrom'].forEach(id => document.getElementById(id).addEventListener('input', updateOverallStatus));
+});
 
 // Postman App export ("Save as JSON" from the Collection Runner) and
 // Newman's `-r json` reporter describe the same kind of run with different
@@ -399,7 +424,8 @@ function renderReport(data) {
     const failedPercentage = totalAssertions > 0 ? ((failedAssertions / totalAssertions) * 100).toFixed(1) : 0;
     
     // Calculate status
-    const status = calculateStatus(passedAssertions, failedAssertions);
+    lastCounts = { passed: passedAssertions, failed: failedAssertions };
+    updateOverallStatus();
 
     // Find fastest and slowest tests
     const fastestTest = allTests.length > 0 ? 

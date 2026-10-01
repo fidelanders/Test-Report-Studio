@@ -1,0 +1,391 @@
+<!-- 
+ * 🔧 Postman JSON to HTML Reporting Tool
+ * 🧑‍💻 Created by Fidelis Ogbeni
+ * 🕓 Version: 1.0.0
+ * 📅 Year: 2025
+ * 📬 GitHub: https://github.com/fidelisogbeni/postman-html-reporter
+ * 
+ * 📄 Licensed under MIT (see LICENSE file)
+ * This tool converts Postman JSON test results into a beautiful HTML report.
+ * It provides a user-friendly interface to visualize test results, performance metrics, and failure details. 
+ -->
+
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="author" content="Fidelis Ogbeni">
+  <meta name="creator" content="Fidelis Ogbeni - Postman HTML Reporter">
+  <meta name="copyright" content="© 2025 Fidelis Ogbeni">
+  <meta name="description" content="Convert Postman JSON test results into a beautiful HTML report">
+  <title>Postman JSON to HTML Report</title>
+
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+
+  <link rel="stylesheet" href="css/styles.css">
+  <link rel="stylesheet" href="css/themeStyles.css" id="themeStyles">
+</head>
+
+<body>
+  <div class="container-fluid">
+    <!-- Header Section -->
+    <header class="d-flex justify-content-between align-items-center my-4">
+      <div>
+        <h1 id="reportTitle" class="h3 mb-0">Postman Report Generator</h1>
+        <p class="text-muted mb-0">Automated Test Summary Report</p>
+      </div>
+      <div class="d-flex align-items-center">
+        <button id="exportPdfBtn" class="btn btn-primary me-2 no-print" onclick="exportReportToPDF()">
+          <i class="fas fa-file-pdf me-2"></i>Export PDF
+        </button>
+        <button id="exportHtmlBtn" class="btn btn-outline-primary me-2 no-print" onclick="exportReportToHTML()">
+          <i class="fas fa-file-code me-2"></i>Export HTML
+        </button>
+        <div class="theme-toggle">
+          <button class="btn btn-outline-secondary theme-btn active" onclick="switchTheme('light')" title="Light theme">
+            <i class="fas fa-sun"></i>
+          </button>
+          <button class="btn btn-outline-secondary theme-btn" onclick="switchTheme('dark')" title="Dark theme">
+            <i class="fas fa-moon"></i>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <!-- Run Metadata Bar -->
+    <div id="runMetaBar" class="run-meta-bar mb-3" style="display: none;">
+      <span class="run-meta-item"><i class="fas fa-file-code me-1"></i><span id="metaFormatBadge" class="badge bg-secondary">Format</span></span>
+      <span class="run-meta-item"><i class="fas fa-globe me-1"></i><span id="metaEnvironmentName">No environment</span></span>
+      <span class="run-meta-item"><i class="fas fa-clock me-1"></i><span id="metaRunDate"></span></span>
+    </div>
+
+    <!-- Main Content -->
+    <div id="reportContainer" style="display: none;">
+      <!-- Overall Status (computed from real results; thresholds are adjustable) -->
+      <section class="overall-status mb-4" id="overallStatus" style="display: none;">
+        <div class="overall-status-main">
+          <span id="overallStatusBadge" class="badge">-</span>
+          <span id="overallStatusText"></span>
+        </div>
+        <div class="overall-status-thresholds">
+          <label>Warning below <input type="number" id="warnBelow" min="0" max="100" step="0.5" value="5">%</label>
+          <label>Critical from <input type="number" id="criticalFrom" min="0" max="100" step="0.5" value="20">%</label>
+          <small>failed assertions</small>
+        </div>
+      </section>
+      <!-- KPI Cards -->
+      <section class="kpi-section mb-4">
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-icon bg-info">
+              <i class="fas fa-sync-alt"></i>
+            </div>
+            <div class="kpi-content">
+              <h3>Total Requests</h3>
+              <div class="kpi-value" id="totalRequests">0</div>
+              <div class="kpi-tooltip">Total HTTP calls made</div>
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon bg-success">
+              <i class="fas fa-check-circle"></i>
+            </div>
+            <div class="kpi-content">
+              <h3>Success Rate</h3>
+              <div class="kpi-value" id="successRate">0%</div>
+              <div class="kpi-tooltip">Based on passed assertions</div>
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon bg-warning">
+              <i class="fas fa-exclamation-triangle"></i>
+            </div>
+            <div class="kpi-content">
+              <h3>Failed Tests</h3>
+              <div class="kpi-value" id="failedTestsCount">0</div>
+              <div class="kpi-tooltip">Requests with failed assertions</div>
+            </div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-icon bg-primary">
+              <i class="fas fa-stopwatch"></i>
+            </div>
+            <div class="kpi-content">
+              <h3>Avg Response Time</h3>
+              <div class="kpi-value" id="avgResponseTime">0ms</div>
+              <div class="kpi-tooltip">Mean time for requests</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Summary Panels -->
+      <section class="summary-panels mb-4">
+        <div class="row">
+          <!-- Test Summary Panel -->
+          <div class="col-md-6 mb-3">
+            <div class="summary-card">
+              <h3 class="summary-card-title">
+                <i class="fas fa-clipboard-list me-2"></i>Test Summary
+              </h3>
+              <div class="summary-table">
+                <div class="summary-row">
+                  <span>Total Tests</span>
+                  <span class="value" id="totalTests">0</span>
+                </div>
+                <div class="summary-row">
+                  <span>Assertions</span>
+                  <span class="value" id="totalAssertions">0</span>
+                </div>
+                <div class="summary-row">
+                  <span>Passed</span>
+                  <span class="value text-success" id="passedTests">0 <small>(0%)</small></span>
+                </div>
+                <div class="summary-row">
+                  <span>Failed</span>
+                  <span class="value text-danger" id="failedTests">0 <small>(0%)</small></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Performance Summary Panel -->
+          <div class="col-md-6 mb-3">
+            <div class="summary-card">
+              <h3 class="summary-card-title">
+                <i class="fas fa-tachometer-alt me-2"></i>Performance Summary
+              </h3>
+              <div class="summary-table">
+                <div class="summary-row">
+                  <span>Total Duration</span>
+                  <span class="value" id="executionTime">0s</span>
+                </div>
+                <div class="summary-row">
+                  <span>Average Test Time</span>
+                  <span class="value" id="avgTime">0ms</span>
+                </div>
+                <div class="summary-row">
+                  <span>Fastest Test</span>
+                  <span class="value" id="fastestTest">0ms</span>
+                </div>
+                <div class="summary-row">
+                  <span>Slowest Test</span>
+                  <span class="value" id="slowestTest">0ms</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Failure Panel -->
+      <section class="failure-panel mb-4" id="failurePanel" style="display: none;">
+        <div class="failure-alert">
+          <div class="failure-header">
+            <i class="fas fa-exclamation-circle me-2"></i>
+            <h4>Test Failures</h4>
+            <span class="failure-count" id="failureCount">0 tests failed (0% failure rate)</span>
+          </div>
+          <button class="btn btn-sm btn-outline-danger" id="viewFailedBtn">
+            View Failed Requests <i class="fas fa-chevron-right ms-1"></i>
+          </button>
+        </div>
+      </section>
+
+      <!-- Charts Section -->
+      <section class="charts-section mb-4">
+        <div class="row">
+          <div class="col-md-6 mb-3">
+            <div class="chart-card">
+              <h4><i class="fas fa-chart-line me-2"></i>Response Time Trends</h4>
+              <div class="chart-container-wrapper">
+                <div class="chart-container">
+                  <canvas id="responseTimeChart"></canvas>
+                </div>
+              </div>
+            </div>
+
+          </div>
+          <div class="col-md-6 mb-3">
+            <div class="chart-card">
+              <h4><i class="fas fa-chart-pie me-2"></i>Status Code Distribution</h4>
+              <div class="chart-container-wrapper">
+                <div class="chart-container">
+                  <canvas id="statusCodeChart"></canvas>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Test Results Tabs -->
+      <section class="test-results-section">
+        <ul class="nav nav-tabs" id="resultsTab" role="tablist">
+          <li class="nav-item" role="presentation">
+            <button class="nav-link active" id="all-tab" data-bs-toggle="tab" data-bs-target="#all" type="button"
+              role="tab">
+              <i class="fas fa-list me-1"></i>All Requests
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="passed-tab" data-bs-toggle="tab" data-bs-target="#passed" type="button"
+              role="tab">
+              <i class="fas fa-check-circle me-1"></i>Passed
+            </button>
+          </li>
+          <li class="nav-item" role="presentation">
+            <button class="nav-link" id="failed-tab" data-bs-toggle="tab" data-bs-target="#failed" type="button"
+              role="tab">
+              <i class="fas fa-times-circle me-1"></i>Failed
+            </button>
+          </li>
+        </ul>
+        <div class="tab-content" id="resultsTabContent">
+          <div class="tab-pane fade show active" id="all" role="tabpanel">
+            <div id="testResultsAll" class="test-results-container"></div>
+          </div>
+          <div class="tab-pane fade" id="passed" role="tabpanel">
+            <div id="testResultsPassed" class="test-results-container"></div>
+          </div>
+          <div class="tab-pane fade" id="failed" role="tabpanel">
+            <div id="testResultsFailed" class="test-results-container"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Upload Area -->
+    <section class="json-upload-area text-center mt-4" id="jsonUploadArea">
+      <i class="fas fa-file-upload display-4 text-muted mb-3"></i>
+      <h5 class="mb-2">Drag & Drop Postman JSON File Here</h5>
+      <p class="text-muted mb-3">or click to browse files</p>
+      <input type="file" id="fileInput" accept="application/json" class="d-none" alt="Upload Postman JSON File">
+      <button class="btn btn-outline-secondary ms-2" id="pasteJsonBtn">
+        <i class="fas fa-paste me-1"></i>Or Paste JSON
+      </button>
+    </section>
+
+    <!-- <footer class="footer mt-5 py-4 text-center no-print">
+      <p class="mb-1">Built with <i class="fas fa-heart text-danger"></i> and <i class="fas fa-coffee"></i> by
+        <strong>Fidelis Ogbeni</strong>.
+      </p>
+      <p class="mb-0 text-muted">A tool to transform Postman JSON into a beautiful, reusable HTML report. <i
+          class="fas fa-rocket text-primary"></i></p>
+    </footer> -->
+
+    <footer class="footer mt-5 py-4 no-print">
+      <div class="container">
+        <div class="row align-items-center">
+          <!-- Left side - About text -->
+          <div class="col-md-6 text-center text-md-start mb-3 mb-md-0">
+            <!-- <p class="mb-1">
+              Built with <i class="fas fa-heart text-danger"></i> and <i class="fas fa-coffee"></i> by
+              <strong>Fidelis Ogbeni</strong>
+            </p> -->
+            <p class="mb-1">
+  <img src="./assets/logo.png" alt="Fidelis Ogbeni Logo" width="20" height="20" style="border-radius: 50%; margin-right: 6px;">
+  Built with <i class="fas fa-heart text-danger"></i> and <i class="fas fa-coffee"></i> by 
+  <strong>Fidelis Ogbeni</strong>
+</p>
+
+            <p class="mb-0 text-muted small">
+              Postman JSON to HTML Report Tool <i class="fas fa-rocket text-primary"></i>
+            </p>
+          </div>
+
+          <!-- Right side - Social links -->
+          <div class="col-md-6 text-center text-md-end">
+            <div class="social-links">
+              <a href="https://github.com/fidelanders" target="_blank" rel="noopener noreferrer"
+                class="text-muted me-3" title="GitHub Profile">
+                <i class="fab fa-github fa-lg"></i>
+                <span class="visually-hidden">GitHub</span>
+              </a>
+
+              <a href="https://linkedin.com/in/fidelisogbeni" target="_blank" rel="noopener noreferrer"
+                class="text-muted me-3" title="LinkedIn Profile">
+                <i class="fab fa-linkedin fa-lg"></i>
+                <span class="visually-hidden">LinkedIn</span>
+              </a>
+
+              <a href="mailto:fidelanders@gmail.com" class="text-muted" title="Email Me">
+                <i class="fas fa-envelope fa-lg"></i>
+                <span class="visually-hidden">Email</span>
+              </a>
+            </div>
+
+            <div class="mt-2">
+              <small class="text-muted">© <span id="currentYear"></span> All Rights Reserved</small>
+            </div>
+          </div>
+        </div>
+      </div>
+    </footer>
+
+    <!-- Test Detail Modal (opened via the "View Details" button on each request card) -->
+    <div class="modal fade" id="testDetailModal" tabindex="-1" aria-hidden="true">
+      <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" id="testDetailTitle">Request Name</h5>
+            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <ul class="nav nav-tabs" id="detailTab" role="tablist">
+              <li class="nav-item" role="presentation">
+                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#detailRequest" type="button" role="tab">Request</button>
+              </li>
+              <li class="nav-item" role="presentation">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#detailResponse" type="button" role="tab">Response</button>
+              </li>
+            </ul>
+            <div class="tab-content pt-3">
+              <div class="tab-pane fade show active" id="detailRequest" role="tabpanel">
+                <pre class="detail-body-pre"><code id="requestBodyContent"></code></pre>
+              </div>
+              <div class="tab-pane fade" id="detailResponse" role="tabpanel">
+                <pre class="detail-body-pre"><code id="responseBodyContent"></code></pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="script/app.js"></script>
+  <script src="script/report-types.js"></script>
+<!--  <script>
+  document.getElementById("viewFailedBtn").addEventListener("click", function () {
+    // Scroll into view if needed
+    document.getElementById("failed-tab").scrollIntoView({ behavior: "smooth", block: "center" });
+
+    // Activate the tab
+    document.getElementById("failed-tab").click();
+  });
+</script> -->
+
+  <script>
+    // Simple inline solution
+    document.getElementById('currentYear').textContent = new Date().getFullYear();
+  </script>
+  <script>
+    // Initialize tooltips
+    var tooltipTriggerList = [].slice.call(document.querySelectorAll('[data-bs-toggle="tooltip"]'))
+    var tooltipList = tooltipTriggerList.map(function (tooltipTriggerEl) {
+      return new bootstrap.Tooltip(tooltipTriggerEl)
+    })
+  </script>
+</body>
+
+</html>

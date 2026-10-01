@@ -1,0 +1,45 @@
+/* JMeter theme: same components as the Postman page, purple accent instead of orange.
+   Load AFTER styles.css and themeStyles.css. */
+:root { --postman-orange: #8E44AD; --highlight: #B370CF; --dragover-border: #8E44AD; --primary: #8E44AD; --upload-hover-bg: rgba(142,68,173,.12); --info-color: #d63384; }
+:root.dark-theme, :root[data-theme="dark"] { --primary: #B370CF; --postman-orange: #A45CC4; }
+.text-jm { color: var(--postman-orange); }
+.pill-pass, .pill-warn, .pill-fail { color: #fff; }
+.pill-pass { background: var(--pass-color); } .pill-warn { background: var(--warning-color); } .pill-fail { background: var(--fail-color); }
+.json-upload-area { border: 2px dashed var(--border); border-radius: 12px; padding: 36px 16px; cursor: pointer; transition: border-color .2s, background .2s; }
+.json-upload-area:hover, .json-upload-area.over { border-color: var(--dragover-border); background: var(--upload-hover-bg); }
+.settings-grid { display: flex; gap: 16px; flex-wrap: wrap; align-items: end; }
+.settings-grid label { font-size: .8rem; color: var(--muted); display: block; margin-bottom: 4px; }
+.settings-grid .form-control, .settings-grid .form-select { width: 150px; }
+th[data-k] { cursor: pointer; white-space: nowrap; color: var(--muted); font-size: .8rem; }
+td.lbl { word-break: break-all; }
+.overall-status.pass { border-left: 6px solid var(--pass-color); } .overall-status.warn { border-left: 6px solid var(--warning-color); } .overall-status.fail { border-left: 6px solid var(--fail-color); }
+.chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+
+
+.print-img { display: none; }
+@media print {
+  @page { margin: 12mm; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  :root.printing { --bg: #fff; --card-bg: #fff; --text: #212529; --muted: #6c757d; --border: #dee2e6; }
+  html.printing body { background: #fff !important; color: #212529 !important; }
+  .no-print { display: none !important; }
+  body { padding: 0 !important; }
+  .container-fluid { padding: 0 !important; max-width: 100% !important; }
+  header { margin: 0 0 10px !important; }
+  .kpi-grid { grid-template-columns: repeat(4, 1fr) !important; gap: 8px !important; }
+  .kpi-icon { width: 34px !important; height: 34px !important; margin-right: 8px !important; font-size: .85rem !important; }
+  .kpi-value { font-size: 1.1rem !important; }
+  .kpi-card, .chart-card, .summary-card, .overall-status { break-inside: avoid; page-break-inside: avoid; transform: none !important; }
+  #out .row { display: block !important; margin: 0 !important; }
+  #out .row > [class*="col-"] { width: 100% !important; max-width: 100% !important; padding: 0 !important; }
+  .chart-container { height: auto !important; min-height: 0 !important; }
+  .chart-container canvas { max-width: 100% !important; }
+  .chart-container.has-img canvas { display: none !important; }
+  .print-img { display: block; width: 100%; height: auto; }
+  .table-responsive { overflow: visible !important; }
+  table { font-size: 11px; width: 100%; }
+  th, td { white-space: normal !important; padding: 4px 6px !important; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  .summary-card-title { break-after: avoid; }
+}

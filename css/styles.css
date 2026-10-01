@@ -472,3 +472,12 @@ header {
     margin-top: 10px;
   }
 }
+
+/* Overall status banner */
+.overall-status{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;padding:14px 18px;border-radius:12px;border:1px solid rgba(128,128,128,.25);background:rgba(128,128,128,.06)}
+.overall-status-main{display:flex;align-items:center;gap:12px;font-weight:600}
+.overall-status .badge{font-size:1rem;padding:.5em .9em;color:#fff}
+.overall-status .status-success{background:#27ae60}.overall-status .status-warning{background:#f39c12}
+.overall-status .status-danger{background:#e74c3c}.overall-status .status-critical{background:#8e1b10}.overall-status .status-muted{background:#7f8c8d}
+.overall-status-thresholds{display:flex;gap:14px;align-items:center;font-size:.85rem}
+.overall-status-thresholds input{width:64px;margin:0 4px;padding:2px 6px}
