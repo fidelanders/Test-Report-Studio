@@ -1,0 +1,2531 @@
+diff --git a/.github/workflows/tests.yml b/.github/workflows/tests.yml
+new file mode 100644
+index 0000000..bbdc035
+--- /dev/null
++++ b/.github/workflows/tests.yml
+@@ -0,0 +1,18 @@
++name: Tests
++on:
++  push:
++  pull_request:
++jobs:
++  jmeter-logic:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-node@v4
++        with:
++          node-version: 20
++          cache: npm
++          cache-dependency-path: tests/package-lock.json
++      - run: npm ci
++        working-directory: tests
++      - run: npm test
++        working-directory: tests
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..c2658d7
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1 @@
++node_modules/
+diff --git a/CHANGES.md b/CHANGES.md
+index 00c9468..9def0ce 100644
+--- a/CHANGES.md
++++ b/CHANGES.md
+@@ -109,3 +109,41 @@ like that gone too.
+ Sortable/searchable results table, folder/suite grouping, and a proper print
+ stylesheet (replacing `window.print()`) were discussed but not implemented
+ here — flagging so nothing is assumed done. Happy to do any of these next.
++
++## 8. Test Report Studio: home page, JMeter report, new repo name
++
++- Added a home page (`index.html`) with a card for each report type; the Postman report moved to `postman.html`.
++- Added a JMeter CSV/JTL report (`jmeter.html`, `css/jmeter.css`) with load, stress, spike, soak and baseline/performance verdicts, a "What Failed" table by endpoint, and print/PDF and JSON export. `sample-jmeter.jtl` is included for trying it out.
++- Added `script/report-types.js` (selector bar and registry for new report types) and `script/theme.js` (shared light/dark theme).
++- JMeter fix: each time slice now keeps a response-time histogram (slice width doubles on very long runs to bound memory). Before this, per-slice p95/p99 were always 0, so spike recovery was reported almost instantly and soak latency drift was always 0%.
++- JMeter fix: stress runs now also grade the whole-run error rate (pass up to 20%, warning up to 40%) instead of always passing; the breaking point is still reported. p95 for stress is measured before the breaking point.
++- JMeter fix: runs of two hours or more are auto-detected as soak; spike recovery is measured from the end of the spike against the pre-spike baseline.
++- Updated the repository name in the README, CONTRIBUTING.md, the home page and the Postman page header.
++- JMeter: spike runs are now scored on the surge itself (slices with users at 50% of peak or more) instead of the whole run, so a long calm period can no longer hide a bad spike.
++- JMeter: added **Export HTML**, a standalone offline report with the verdict, tables and charts as images. The JSON button is now `exportJsonBtn`.
++- Added `tests/` (60 automated checks that run the real page in jsdom with generated JTL files) and a GitHub Actions workflow, `.github/workflows/tests.yml`.
++- JMeter: added **Compare with baseline**. After a report is shown you can load an older run; the page adds "p95 vs baseline" and "Error rate vs baseline" checks to the verdict (default tolerance 10% on p95, adjustable), a metrics comparison table, a per-endpoint table (regression, improved, same, new, removed), an overlay chart of p95 over the run, and a warning when the two runs used very different load, length or endpoints. The comparison is included in the HTML and JSON exports.
++- Internal: the JTL reader is now a reusable promise (`readJtl`), so two files can be read in one session.
++
++## 9. Postman report review and fixes
++
++- Requests that never completed (connection refused, DNS, timeout) or hit a script error are now **ERROR** and counted as failures. Before, they showed PASS and could leave the run looking healthy.
++- Requests with no tests show **NO TESTS** and are not counted as passed. Skipped assertions show **SKIPPED**. Totals no longer include skipped assertions.
++- Failed assertion messages from Newman are now shown on the request card.
++- Captured and shown: request and response **headers**, folder path (from the collection tree), iteration number, response size, and legacy Postman request bodies (`rawModeData`).
++- Request / Response viewer: headers table, body size, Copy and Download, and a display limit for very large bodies (the full body is still copied and downloaded). Request errors are shown in the viewer.
++- Notices above the report when a file has no bodies or headers (with the Newman and Postman CLI options that include them), and when requests errored, have no tests or were skipped.
++- Execution time uses the run's wall-clock time when the file has it; fastest and average times ignore requests that got no response.
++- HTML export: embedded data can no longer be broken out of by `</script>` in a response body (this could truncate the report and run injected markup); `app.js` and the other scripts are inlined so the report works as a single offline file; the selector bar is removed.
++- HTML export: new **Mask secrets** option (on by default) for passwords, tokens, API keys, cookies and Bearer values in bodies, headers and URLs, and an **Include bodies & headers** option.
++- `.json` files with an empty browser MIME type are accepted. The unsupported-format message now explains how to produce a supported file from the Postman CLI.
++- Tests: 19 Postman tests, including an end-to-end HTML export check.
++
++## 10. PDF export rebuilt on the print engine
++
++- **Export PDF** now opens the print dialog (choose "Save as PDF") instead of screenshotting the page and slicing it into A4 strips. Cards, charts and table rows are no longer cut across pages, any paper size works, text is selectable, and very long reports no longer hit browser canvas limits.
++- While printing, charts are replaced with sharp images sized for the page, the light theme is forced (dark mode used to print unreadable text), and the tab bar, buttons, export options and selector bar are hidden. The tab you are viewing (All, Passed or Failed) is the one that prints.
++- The default PDF file name comes from the page title: `Postman report - <collection> - <date>`. A short hint explains the "Save as PDF" step.
++- Charts are now tracked and destroyed when a second report is loaded, instead of stacking on the same canvas.
++- Removed the jsPDF and html2canvas dependencies. Ctrl+P / Cmd+P gets the same print layout.
++
+diff --git a/CONTRIBUTING.md b/CONTRIBUTING.md
+index 65f6c6c..f4d8801 100644
+--- a/CONTRIBUTING.md
++++ b/CONTRIBUTING.md
+@@ -18,4 +18,4 @@ We welcome:
+ 2. Clone your fork:
+ 
+    ```bash
+-   git clone https://github.com/fidelanders/postman-html-reporter.git
++   git clone https://github.com/fidelanders/Test-Report-Studio.git
+diff --git a/README.md b/README.md
+index 8aec758..8b8e9dc 100644
+--- a/README.md
++++ b/README.md
+@@ -13,9 +13,13 @@ This project was born out of the need for better visibility and presentation of
+ 
+ - 🔄 **Postman JSON Parser**: Parses Postman collection runner's exported `.json` result files.
+ - 🖥️ **Interactive HTML Report**: Automatically renders a styled, responsive dashboard with test suite summaries.
+-- 📄 **PDF Export**: One-click PDF download functionality.
++- 📄 **PDF Export**: Opens the print dialog; choose **Save as PDF**. Real selectable text, any paper size, and pages break between cards (not through them). Charts print as sharp images and the light theme is used even in dark mode.
+ - 🌐 **Mobile-Friendly**: Responsive layout for seamless use on all screen sizes.
+ - 🎨 **Customizable Themes** *(Upcoming)*: Change color schemes and branding styles.
++- 🧾 **Request / Response viewer**: bodies and headers for every request, with copy, download and a size label; very large bodies are shortened on screen only.
++- 🔒 **Safe sharing**: the HTML export can mask passwords, tokens, API keys and cookies, can leave out bodies and headers, and works offline as a single file.
++- ⚠️ **Honest statuses**: requests that never completed show ERROR, requests without tests show NO TESTS, skipped assertions show SKIPPED, and failure messages appear on the card.
++- 🔍 **Baseline comparison**: compare a JMeter run with an older one to spot regressions per endpoint.
+ - 🏠 **Home Page**: Choose between the Postman and JMeter reports.
+ - ⚡ **JMeter CSV/JTL Reports**: Configurable load, stress, spike, soak and baseline/performance analysis with error-rate, p95, p99, throughput, recovery and latency-drift logic.
+ - 📊 **Visual Breakdown**: Success/failure rate, error logs, and test durations visualized with charts.
+@@ -28,8 +32,8 @@ The JMeter report uses the same test data/script as the source of truth, but eac
+ | Test type | Primary purpose | Key verdict logic |
+ |---|---|---|
+ | Load | Validate expected peak traffic | Error rate, p95, p99 and optional throughput thresholds |
+-| Stress | Find degradation/breaking point | Progressive load analysis; identifies the first degradation boundary rather than treating the boundary itself as a normal failure |
+-| Spike | Validate sudden surge resilience | Error rate, p95, p99 and recovery to ≤120% of baseline |
++| Stress                 | Find degradation/breaking point   | Reports the breaking point (first interval with over 5% errors or p95 past the limit) and grades the whole-run error rate (default: pass ≤ 20%, warning ≤ 40%) |
++| Spike                  | Validate sudden surge resilience  | Error rate, p95 and p99 during the surge itself (users at 50% of peak or more) and recovery to ≤120% of the pre-spike baseline p95 |
+ | Soak | Detect time-dependent degradation | Error rate, p95, p99 and latency drift between the first and last 10% of the run |
+ | Performance / Baseline | Establish normal behaviour | Configurable error, p95, p99 and optional throughput thresholds |
+ 
+@@ -43,7 +47,7 @@ A single baseline run is useful for establishing reference performance, but it s
+ |------------------|---------------------|
+ | Frontend         | HTML, CSS, JavaScript |
+ | Charting         | Chart.js            |
+-| PDF Export       | jsPDF, html2canvas  |
++| PDF Export       | Browser print engine (Save as PDF) |
+ | File Handling    | FileReader API      |
+ | Future Upgrade   | React.js (in roadmap) |
+ 
+@@ -62,8 +66,8 @@ No installation needed if running the static version. You can simply open the `i
+ 1. Clone the repo:
+ 
+    ```
+-   git clone https://github.com/fidelanders/postman-html-reporter.git
+-   cd postman-html-reporter
++   git clone https://github.com/fidelanders/Test-Report-Studio.git
++   cd Test-Report-Studio
+    ```
+ 
+ 2. Open index.html in your browser:
+@@ -88,10 +92,13 @@ You can host this tool on:
+ ## 📂 File Structure
+ 
+ ```
+-postman-html-report/
++Test-Report-Studio/
+ ├── index.html          # Home page (choose a report type)
+ ├── postman.html        # Postman JSON report
+ ├── jmeter.html         # JMeter CSV/JTL report
++├── sample-jmeter.jtl   # Sample JMeter results for trying the JMeter report
++├── CHANGES.md          # What changed from the original project
++├── tests/              # Automated tests for the JMeter logic
+ ├── css/
+ │   ├── styles.css      # Shared components
+ │   ├── themeStyles.css # Light/dark theme
+@@ -125,6 +132,10 @@ Example of exported PDF
+ 
+ 
+ ## 🧪 How to Use
++
++**JMeter:** save your results as CSV/JTL with the default header row, open `jmeter.html` (or choose JMeter on the home page), pick the test type (or leave Auto-detect), adjust the thresholds if needed, then drop the file. Try it with `sample-jmeter.jtl`. To check for regressions, click **Compare with baseline** after the report appears and choose an older run: the report adds p95 and error-rate checks against it, a per-endpoint table (regression / improved / new / removed) and an overlay chart. The tolerance (default 10% on p95) is adjustable.
++
++**Postman:** to get request and response bodies in the report, run `newman run collection.json -r json --reporter-json-export out.json`. With the Postman CLI add `--reporter-json-structure newman` and do not use the `--reporter-json-omit...` options.
+    ```
+    Run your tests in Postman using the Collection Runner.
+    Export the results as a JSON file.
+@@ -162,8 +173,6 @@ MIT License © 2025 Fidelis Ogbeni
+ 🙌 Acknowledgements
+ ```
+ Postman
+-jsPDF
+-html2canvas
+ Chart.js
+ ```
+ 
+diff --git a/css/jmeter.css b/css/jmeter.css
+index 6589804..16ffd95 100644
+--- a/css/jmeter.css
++++ b/css/jmeter.css
+@@ -43,3 +43,5 @@ td.lbl { word-break: break-all; }
+   tr { break-inside: avoid; page-break-inside: avoid; }
+   .summary-card-title { break-after: avoid; }
+ }
++
++.pill-neutral { background: #7f8c8d; color: #fff; }
+diff --git a/css/styles.css b/css/styles.css
+index 3e55643..803125f 100644
+--- a/css/styles.css
++++ b/css/styles.css
+@@ -481,3 +481,34 @@ header {
+ .overall-status .status-danger{background:#e74c3c}.overall-status .status-critical{background:#8e1b10}.overall-status .status-muted{background:#7f8c8d}
+ .overall-status-thresholds{display:flex;gap:14px;align-items:center;font-size:.85rem}
+ .overall-status-thresholds input{width:64px;margin:0 4px;padding:2px 6px}
++
++/* Request states beyond pass / fail */
++.test-card.skipped, .test-card.notests { border-left-color: var(--muted); }
++.test-status.skipped, .test-status.notests { background-color: rgba(127, 140, 141, .18); color: var(--muted); }
++.assertion.skipped { background: rgba(127, 140, 141, .12); }
++.assertion-msg { margin-top: 4px; color: var(--fail-color); word-break: break-word; }
++.detail-headers td { border-bottom: 1px solid var(--border); font-size: .8rem; }
++
++/* PDF / print: pages break between cards, charts print as images, light theme */
++.print-img { display: none; }
++@media print {
++  @page { margin: 12mm; }
++  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
++  :root.printing { --bg: #fff; --card-bg: #fff; --text: #212529; --muted: #6c757d; --border: #dee2e6; }
++  html.printing body { background: #fff !important; color: #212529 !important; }
++  .container-fluid { padding: 0 !important; max-width: 100% !important; }
++  #rt-bar, #exportOptions, #pdfHint, .nav-tabs, .btn-toggle-visibility, .test-card .btn { display: none !important; }
++  .tab-content > .tab-pane { display: none !important; }
++  .tab-content > .tab-pane.active { display: block !important; opacity: 1 !important; }
++  .kpi-grid { grid-template-columns: repeat(4, 1fr) !important; gap: 8px !important; }
++  .kpi-tooltip { display: none !important; }
++  .kpi-card, .chart-card, .summary-card, .test-card, .overall-status, .alert { break-inside: avoid; page-break-inside: avoid; transform: none !important; }
++  #reportContainer .row > [class*="col-"] { flex: 0 0 100% !important; width: 100% !important; max-width: 100% !important; }
++  .chart-container { height: auto !important; min-height: 0 !important; }
++  .chart-container canvas { max-width: 100% !important; }
++  .chart-container.has-img canvas { display: none !important; }
++  .print-img { display: block; width: 100%; height: auto; }
++  .table-responsive { overflow: visible !important; }
++  thead { display: table-header-group; }
++  tr { break-inside: avoid; page-break-inside: avoid; }
++}
+diff --git a/index.html b/index.html
+index b6676ab..13965a2 100644
+--- a/index.html
++++ b/index.html
+@@ -17,7 +17,7 @@
+   <nav class="home-nav">
+     <a class="brand" href="index.html"><img src="assets/logo.png" alt="Logo"> Test Report Studio</a>
+     <div class="nav-actions">
+-      <a class="gh" href="https://github.com/fidelanders/postman-html-report" target="_blank" rel="noopener noreferrer" title="GitHub"><i class="fab fa-github"></i></a>
++      <a class="gh" href="https://github.com/fidelanders/Test-Report-Studio" target="_blank" rel="noopener noreferrer" title="GitHub"><i class="fab fa-github"></i></a>
+       <div class="theme-toggle">
+         <button class="btn btn-outline-secondary theme-btn active" onclick="switchTheme('light')" title="Light theme"><i class="fas fa-sun"></i></button>
+         <button class="btn btn-outline-secondary theme-btn" onclick="switchTheme('dark')" title="Dark theme"><i class="fas fa-moon"></i></button>
+diff --git a/jmeter.html b/jmeter.html
+index 6422ad5..6614d31 100644
+--- a/jmeter.html
++++ b/jmeter.html
+@@ -21,9 +21,15 @@
+     </div>
+     <div class="d-flex align-items-center flex-wrap gap-2 no-print">
+       <button id="newBtn" class="btn btn-outline-secondary d-none"><i class="fas fa-rotate-left me-2"></i>New report</button>
++      <span id="baseBtns" class="d-none">
++        <button id="baseBtn" class="btn btn-outline-secondary me-2" title="Choose an older run to compare against"><i class="fas fa-code-compare me-2"></i>Compare with baseline</button>
++        <button id="clearBaseBtn" class="btn btn-outline-secondary me-2 d-none"><i class="fas fa-xmark me-2"></i>Clear baseline</button>
++        <input type="file" id="baseFile" accept=".csv,.jtl,.txt" class="d-none">
++      </span>
+       <span id="exportBtns" class="d-none">
+         <button id="exportPdfBtn" class="btn btn-primary me-2"><i class="fas fa-file-pdf me-2"></i>Export PDF</button>
+-        <button id="exportHtmlBtn" class="btn btn-outline-primary me-2"><i class="fas fa-file-code me-2"></i>Export JSON</button>
++        <button id="exportHtmlBtn" class="btn btn-outline-primary me-2"><i class="fas fa-file-code me-2"></i>Export HTML</button>
++        <button id="exportJsonBtn" class="btn btn-outline-secondary me-2"><i class="fas fa-file-lines me-2"></i>Export JSON</button>
+       </span>
+       <div class="theme-toggle">
+         <button class="btn btn-outline-secondary theme-btn active" onclick="switchTheme('light')" title="Light theme"><i class="fas fa-sun"></i></button>
+@@ -46,9 +52,9 @@
+       <div><label for="tWarn">Warning error rate (%)</label><input id="tWarn" type="number" class="form-control form-control-sm" value="5" step="0.1" min="0" max="100"></div>
+       <div><label for="tP95">Max p95 (ms)</label><input id="tP95" type="number" class="form-control form-control-sm" value="800" min="0"></div>
+       <div><label for="tP99">Max p99 (ms)</label><input id="tP99" type="number" class="form-control form-control-sm" value="1500" min="0"></div>
+-      <div><label for="tRps">Min throughput (req/s)</label><input id="tRps" type="number" class="form-control form-control-sm" placeholder="optional" min="0"></div><div><label for="tRecovery">Max recovery (sec)</label><input id="tRecovery" type="number" class="form-control form-control-sm" value="120" min="0"></div>
++      <div><label for="tRps">Min throughput (req/s)</label><input id="tRps" type="number" class="form-control form-control-sm" placeholder="optional" min="0"></div><div id="tolWrap" class="d-none"><label for="tTol" title="How much slower than the baseline p95 is still acceptable">Baseline tolerance (%)</label><input id="tTol" type="number" class="form-control form-control-sm" value="10" min="0"></div><div><label for="tRecovery">Max recovery (sec)</label><input id="tRecovery" type="number" class="form-control form-control-sm" value="120" min="0"></div>
+     </div>
+-    <small class="text-muted d-block mt-2">Verdicts use error rate, p95 and p99; throughput is optional. Load/soak use explicit acceptance thresholds. Stress finds the degradation/breaking point rather than treating the breaking point itself as a failure. Spike also checks recovery after the surge. Defaults follow the selected test type; edit a value to override.</small>
++    <small class="text-muted d-block mt-2">Verdicts use error rate, p95 and p99; throughput is optional. Load/soak use explicit acceptance thresholds. Stress reports the breaking point (first interval with over 5% errors or p95 past the limit) and also grades the error rate of the whole run (defaults: pass ≤ 20%, warn ≤ 40%). Spike is scored on the surge itself (users at 50% of peak or more) and also checks recovery. Defaults follow the selected test type; edit a value to override.</small>
+   </section>
+ 
+   <div id="out" hidden></div>
+@@ -89,21 +95,24 @@ const pct = (h, n, p) => { let s = 0; for (const i of Object.keys(h).map(Number)
+ const ALIAS = { ts: ['timeStamp', 'timestamp'], el: ['elapsed'], lb: ['label'], ok: ['success'], cd: ['responseCode'], ms: ['failureMessage', 'responseMessage'], users: ['allThreads'], mt: ['method', 'httpMethod', 'sampleMethod'] };
+ const mk = () => ({ n: 0, f: 0, s: 0, mn: 1e12, mx: 0, h: {}, e: {} });
+ const add = (o, el, ok, key) => { o.n++; o.s += el; if (el < o.mn) o.mn = el; if (el > o.mx) o.mx = el; const b = bk(el); o.h[b] = (o.h[b] || 0) + 1; if (!ok) { o.f++; if (key) o.e[key] = (o.e[key] || 0) + 1; } };
++// Time-slice helpers: each slice keeps counts and a response-time histogram, so p95/p99 can be computed for any window.
++const mergeBin = (a, b) => { a.n += b.n; a.f += b.f; a.s += b.s; if (b.users > a.users) a.users = b.users; for (const k in b.h) a.h[k] = (a.h[k] || 0) + b.h[k]; };
++const winStat = arr => { const o = { n: 0, f: 0, s: 0, h: {} }; arr.forEach(x => { o.n += x.n; o.f += x.f; o.s += x.s; for (const k in x.h) o.h[k] = (o.h[k] || 0) + x.h[k]; }); return { n: o.n, er: o.n ? o.f / o.n * 100 : 0, avg: o.n ? o.s / o.n : 0, p95: o.n ? pct(o.h, o.n, .95) : 0, p99: o.n ? pct(o.h, o.n, .99) : 0 }; };
+ const $ = id => document.getElementById(id);
+ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+ const fmtT = s => s >= 60 ? Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's' : Math.round(s) + 's';
+ const av = a => a.reduce((x, b) => x + b.s, 0) / Math.max(1, a.reduce((x, b) => x + b.n, 0));
+-let R = null, charts = [], sk = 'st', touched = false;
++let R = null, BASE = null, charts = [], sk = 'st', touched = false;
+ // Pass criteria follow the test type; typing in a field overrides them until the type changes.
+-const PRESET = { load: { err: 1, warnErr: 5, p95: 800, p99: 1500 }, stress: { err: 5, warnErr: 10, p95: 2000, p99: 3000 }, spike: { err: 2, warnErr: 5, p95: 1500, p99: 2500 }, soak: { err: 1, warnErr: 5, p95: 800, p99: 1500 }, performance: { err: 1, warnErr: 5, p95: 500, p99: 1000 } };
+-let METH = {};
+-const disp = lb => { const m = METH[lb]; return m && !lb.toUpperCase().startsWith(m) ? m + ' ' + lb : lb; };
++const PRESET = { load: { err: 1, warnErr: 5, p95: 800, p99: 1500 }, stress: { err: 20, warnErr: 40, p95: 2000, p99: 3000 }, spike: { err: 2, warnErr: 5, p95: 1500, p99: 2500 }, soak: { err: 1, warnErr: 5, p95: 800, p99: 1500 }, performance: { err: 1, warnErr: 5, p95: 500, p99: 1000 } };
++const disp = lb => { const m = (R && R.meth || {})[lb]; return m && !lb.toUpperCase().startsWith(m) ? m + ' ' + lb : lb; };
+ 
+ function fail(m) { $('msg').textContent = m; $('msg').classList.remove('d-none'); $('progWrap').classList.add('d-none'); }
+ 
+-function parse(file) {
+-  $('msg').classList.add('d-none'); $('progWrap').classList.remove('d-none'); $('prog').style.width = '0%'; $('out').hidden = true;
+-  const T = mk(), L = {}, B = {}, slow = []; METH = {};
++function readJtl(file, onProgress) {
++  return new Promise((resolve, reject) => {
++  const T = mk(), L = {}, slow = [], meth = {}; let B = {}, bw = 1, nb = 0;
++  const halve = () => { const N = {}; for (const k in B) { const nk = Math.floor(k / 2); if (N[nk]) mergeBin(N[nk], B[k]); else N[nk] = B[k]; } B = N; bw *= 2; nb = Object.keys(B).length; };
+   let col = null, first = 1e15, last = 0, skip = 0, rows = 0, minSlow = 0, aborted = false;
+   Papa.parse(file, {
+     header: true, skipEmptyLines: true, worker: true, chunkSize: 2097152,
+@@ -113,7 +122,7 @@ function parse(file) {
+         const f = res.meta.fields || []; col = {};
+         for (const k in ALIAS) col[k] = f.find(x => ALIAS[k].includes(x.replace(/^\uFEFF/, '').trim()));
+         const miss = ['ts', 'el', 'lb', 'ok'].filter(k => !col[k]);
+-        if (miss.length) { aborted = true; p.abort(); return fail('This does not look like a JMeter CSV with a header row (missing: ' + miss.join(', ') + '). Save results as CSV with the default header line.'); }
++        if (miss.length) { aborted = true; p.abort(); return reject(new Error('This does not look like a JMeter CSV with a header row (missing: ' + miss.join(', ') + '). Save results as CSV with the default header line.')); }
+       }
+       for (const r of res.data) {
+         let ts = +r[col.ts]; if (isNaN(ts)) ts = Date.parse(r[col.ts]);
+@@ -122,45 +131,107 @@ function parse(file) {
+         rows++;
+         const ok = String(r[col.ok]).toLowerCase() === 'true', lb = r[col.lb] || '(no label)';
+         const err = ok ? null : ((col.cd && r[col.cd]) || '?') + ' · ' + String((col.ms && r[col.ms]) || '').slice(0, 80), key = ok ? null : lb + '\u0001' + err;
+-        if (col.mt && r[col.mt] && !METH[lb]) METH[lb] = String(r[col.mt]).toUpperCase();
++        if (col.mt && r[col.mt] && !meth[lb]) meth[lb] = String(r[col.mt]).toUpperCase();
+         add(T, el, ok, key); add(L[lb] || (L[lb] = mk()), el, ok, key);
+         if (ts < first) first = ts; if (ts + el > last) last = ts + el;
+-        const s = Math.floor(ts / 1000), b = B[s] || (B[s] = { n: 0, f: 0, s: 0, users: 0 });
+-        b.n++; b.s += el; if (!ok) b.f++;
++        const sec = Math.floor(ts / 1000); let k = Math.floor(sec / bw), b = B[k];
++        if (!b) { b = B[k] = { n: 0, f: 0, s: 0, users: 0, h: {} }; if (++nb > 600) { halve(); k = Math.floor(sec / bw); b = B[k]; } }
++        b.n++; b.s += el; if (!ok) b.f++; const hi = bk(el); b.h[hi] = (b.h[hi] || 0) + 1;
+         const users = col.users ? +r[col.users] : 0; if (users > b.users) b.users = users;
+         if (el > minSlow) { slow.push({ lb, el, ts }); if (slow.length >= 40) { slow.sort((a, b) => b.el - a.el); slow.length = 20; minSlow = slow[19].el; } }
+       }
+-      $('prog').style.width = Math.min(99, (res.meta.cursor / file.size) * 100) + '%';
++      onProgress(Math.min(99, (res.meta.cursor / file.size) * 100));
+     },
+-    complete() { if (aborted) return; if (!rows) return fail('No valid samples found in this file.'); finish(T, L, B, slow, first, last, rows, skip, file.name); },
+-    error: e => fail(e.message || String(e))
++    complete() { if (aborted) return; if (!rows) return reject(new Error('No valid samples found in this file.')); resolve(finish(T, L, B, slow, first, last, rows, skip, file.name, bw, meth)); },
++    error: e => reject(e)
++  });
+   });
+ }
+ 
+-function finish(T, L, B, slow, first, last, rows, skip, name) {
++function startProgress() { $('msg').classList.add('d-none'); $('progWrap').classList.remove('d-none'); $('prog').style.width = '0%'; }
++function parse(file) {
++  startProgress(); $('out').hidden = true;
++  return readJtl(file, p => { $('prog').style.width = p + '%'; }).then(rep => {
++    R = rep; BASE = null; $('progWrap').classList.add('d-none'); $('drop').classList.add('d-none'); $('newBtn').classList.remove('d-none'); render();
++  }).catch(e => fail(e.message || String(e)));
++}
++// Baseline = an older run to compare the current report against
++function loadBaseline(file) {
++  startProgress();
++  return readJtl(file, p => { $('prog').style.width = p + '%'; }).then(rep => { BASE = rep; $('progWrap').classList.add('d-none'); render(); }).catch(e => fail('Baseline: ' + (e.message || String(e))));
++}
++function clearBaseline() { BASE = null; render(); }
++
++function finish(T, L, B, slow, first, last, rows, skip, name, bw, meth) {
+   const dur = Math.max((last - first) / 1000, 1), ks = Object.keys(B).map(Number);
+   let k0 = Infinity, k1 = -Infinity; ks.forEach(k => { if (k < k0) k0 = k; if (k > k1) k1 = k; });
+   const w = Math.max(1, Math.ceil((k1 - k0 + 1) / 100)), sp = [];
+-  for (const k of ks) { const i = Math.floor((k - k0) / w), b = B[k], t = sp[i] || (sp[i] = { n: 0, f: 0, s: 0, users: 0, h: {} }); t.n += b.n; t.f += b.f; t.s += b.s; if (b.users > t.users) t.users = b.users; for (const [bin,count] of Object.entries(b.h || {})) t.h[bin] = (t.h[bin] || 0) + count; }
++for (const k of ks) { const i = Math.floor((k - k0) / w); (sp[i] || (sp[i] = { n: 0, f: 0, s: 0, users: 0, h: {} })); mergeBin(sp[i], B[k]); }
+   const tl = Array.from(sp, t => t || { n: 0, f: 0, s: 0, users: 0, h: {} });
+   const bucketPct = (b,p) => { const n=b.n||0; let s=0; for (const i of Object.keys(b.h||{}).map(Number).sort((a,c)=>a-c)) { s += b.h[i]; if (s >= n*p) return bv(i); } return 0; };
+   tl.forEach(b => { b.p95 = bucketPct(b,.95); b.p99 = bucketPct(b,.99); });
+   const sum = o => { const c = p => Math.min(o.mx, pct(o.h, o.n, p)); return { n: o.n, f: o.f, er: o.f / o.n, avg: o.s / o.n, mn: o.mn, mx: o.mx, p90: c(.9), p95: c(.95), p99: c(.99), rps: o.n / dur, top: Object.entries(o.e).sort((a, b) => b[1] - a[1]).slice(0, 10) }; };
+-  R = { name, rows, skip, dur, w, tl, tot: sum(T), items: Object.entries(L).map(([k, o]) => ({ name: k, ...sum(o) })), slow: slow.sort((a, b) => b.el - a.el).slice(0, 20) };
+-  R.detected = detect(tl); R.peakUsers = tl.reduce((m, b) => Math.max(m, b.users), 0);
+-  $('progWrap').classList.add('d-none'); $('drop').classList.add('d-none'); $('newBtn').classList.remove('d-none'); render();
++  const rep = { name, rows, skip, dur, w: w * bw, tl, tot: sum(T), items: Object.entries(L).map(([k, o]) => ({ name: k, ...sum(o) })), slow: slow.sort((a, b) => b.el - a.el).slice(0, 20) };
++  rep.detected = detect(tl, dur); rep.peakUsers = tl.reduce((m, b) => Math.max(m, b.users), 0); rep.meth = meth || {};
++  return rep;
+ }
+ 
+-function detect(tl) {
++function detect(tl, dur) {
+   const series = tl.map(t => t.users), n = series.length, peak = Math.max(...series);
+   if (peak <= 1) return 'performance';
+   const q = Math.max(1, n >> 2), avg = a => a.reduce((x, y) => x + y, 0) / a.length;
+   const median = [...series].sort((a, b) => a - b)[n >> 1];
+   if (peak >= 3 * median && series.filter(x => x >= peak * .5).length / n < .25) return 'spike';
+   if (avg(series.slice(0, q)) <= peak * .4 && avg(series.slice(-q)) >= peak * .85 && series.filter(x => x >= peak * .9).length / n < .3) return 'stress';
+-  return 'load';
++  return dur >= 7200 ? 'soak' : 'load';
+ }
+ 
++// ---- Baseline comparison: current run vs an older run ----
++const sgn = (v, u) => (v >= 0 ? '+' : '') + v.toFixed(1) + u;
++function compareRuns(cur, base, tol) {
++  const pc = (c, b) => b ? (c - b) / b * 100 : 0, ct = cur.tot, bt = base.tot;
++  const sameLoad = !(cur.peakUsers && base.peakUsers) || Math.abs(cur.peakUsers - base.peakUsers) / base.peakUsers <= .2;
++  const notes = [];
++  if (!sameLoad) notes.push('Peak users differ (' + base.peakUsers + ' in the baseline, ' + cur.peakUsers + ' now), so latency and throughput are not like for like.');
++  if (Math.abs(cur.dur - base.dur) / base.dur > .5) notes.push('Run lengths differ a lot (' + fmtT(base.dur) + ' vs ' + fmtT(cur.dur) + ').');
++  const bm = new Map(base.items.map(i => [i.name, i])), cm = new Map(cur.items.map(i => [i.name, i]));
++  const shared = [...cm.keys()].filter(k => bm.has(k)).length, most = Math.max(bm.size, cm.size);
++  if (shared / most < .8) notes.push('Only ' + shared + ' of ' + most + ' endpoints appear in both runs.');
++  const mkm = (key, label, b, c, mode, dir, f) => {
++    const d = mode === 'pp' ? c - b : pc(c, b), eps = mode === 'pp' ? .5 : tol;
++    const v = dir === 'down' ? (d > eps ? 'worse' : d < -eps ? 'better' : 'same') : dir === 'up' ? (d < -eps ? 'worse' : d > eps ? 'better' : 'same') : 'info';
++    return { key, label, baseline: f(b), current: f(c), change: d, mode, v };
++  };
++  const metrics = [
++    mkm('er', 'Error rate', bt.er * 100, ct.er * 100, 'pp', 'down', v => v.toFixed(2) + '%'),
++    mkm('avg', 'Avg response', bt.avg, ct.avg, 'pct', 'down', v => Math.round(v) + ' ms'),
++    mkm('p95', 'p95', bt.p95, ct.p95, 'pct', 'down', v => Math.round(v) + ' ms'),
++    mkm('p99', 'p99', bt.p99, ct.p99, 'pct', 'down', v => Math.round(v) + ' ms'),
++    mkm('rps', 'Throughput', bt.rps, ct.rps, 'pct', sameLoad ? 'up' : 'info', v => v.toFixed(1) + '/s'),
++    mkm('users', 'Peak users', base.peakUsers, cur.peakUsers, 'pct', 'info', v => v || 'n/a')
++  ];
++  const er = metrics[0], p95 = metrics[2];
++  const rules = [
++    { name: 'p95 vs baseline', val: sgn(p95.change, '%'), lim: 'pass ≤ +' + tol + '% · warn ≤ +' + +(tol * 2.5).toFixed(1) + '%', s: p95.change <= tol ? 'pass' : p95.change <= tol * 2.5 ? 'warn' : 'fail' },
++    { name: 'Error rate vs baseline', val: sgn(er.change, ' pp'), lim: 'pass ≤ +0.5 pp · warn ≤ +2 pp', s: er.change <= .5 ? 'pass' : er.change <= 2 ? 'warn' : 'fail' }
++  ];
++  const rows = [];
++  for (const [name, c] of cm) {
++    const b = bm.get(name);
++    if (!b) { rows.push({ name, c, status: 'new' }); continue; }
++    if (b.n < 30 || c.n < 30) { rows.push({ name, b, c, status: 'low' }); continue; }
++    const dp = pc(c.p95, b.p95), de = c.er * 100 - b.er * 100;
++    const worse = (dp > tol && c.p95 - b.p95 >= 20) || de > .5, better = !worse && ((dp < -tol && b.p95 - c.p95 >= 20) || de < -.5);
++    rows.push({ name, b, c, dp, de, status: worse ? 'worse' : better ? 'better' : 'same' });
++  }
++  for (const [name, b] of bm) if (!cm.has(name)) rows.push({ name, b, status: 'removed' });
++  const order = { worse: 0, new: 1, removed: 2, low: 3, same: 4, better: 5 };
++  rows.sort((a, b) => order[a.status] - order[b.status] || (b.dp || 0) - (a.dp || 0));
++  const counts = {}; rows.forEach(r => counts[r.status] = (counts[r.status] || 0) + 1);
++  return { metrics, rows, notes, counts, rules, tol, sameLoad };
++}
++const resample = (tl, n) => Array.from({ length: n }, (_, i) => { const b = tl[Math.min(tl.length - 1, Math.floor(i / n * tl.length))]; return b && b.n ? Math.round(b.p95) : null; });
++
+ function render() {
+   if (!R) return;
+   const t = R.tot, tl = R.tl;
+@@ -168,41 +239,46 @@ function render() {
+   if (!touched) { const P = PRESET[ty]; $('tErr').value = P.err; $('tWarn').value = P.warnErr; $('tP95').value = P.p95; $('tP99').value = P.p99; }
+   const num = (id, d) => { const v = parseFloat($(id).value); return isNaN(v) ? d : v; }, P0 = PRESET[ty];
+   const errL = num('tErr', P0.err), warnErr = Math.max(errL, num('tWarn', P0.warnErr)), p95L = num('tP95', P0.p95), p99L = num('tP99', P0.p99), rL = num('tRps', 0), recoveryL = Math.max(0, num('tRecovery', 120));
+-  const errorPct = t.er * 100;
+-  const firstQ = tl.slice(0, Math.max(1, Math.ceil(tl.length * .1)));
+-  const lastQ = tl.slice(Math.max(0, tl.length - Math.max(1, Math.ceil(tl.length * .1))));
+-  const baseAvg = av(firstQ), endAvg = av(lastQ);
+-  const baseP95 = firstQ.length ? firstQ.reduce((x,b) => x + (b.p95 || 0) * b.n, 0) / Math.max(1, firstQ.reduce((x,b)=>x+b.n,0)) : 0;
+-  const endP95 = lastQ.length ? lastQ.reduce((x,b) => x + (b.p95 || 0) * b.n, 0) / Math.max(1, lastQ.reduce((x,b)=>x+b.n,0)) : 0;
+-  const driftPct = baseP95 ? ((endP95 - baseP95) / baseP95) * 100 : 0;
+-  const spikePeak = tl.reduce((m, b, i) => b.users > (tl[m]?.users || 0) ? i : m, 0);
+-  const spikeBase = baseP95;
+-  const recoveryIndex = tl.findIndex((b, i) => i > spikePeak && b.n && (b.p95 || 0) <= 1.2 * spikeBase);
+-  const recoverySec = recoveryIndex < 0 ? null : (recoveryIndex - spikePeak) * R.w;
+-  let rules = [];
+-  if (ty === 'stress') {
+-    const breakIndex = tl.findIndex(b => b.n && (b.f / b.n) * 100 > warnErr);
+-    const degradationIndex = tl.findIndex(b => b.n && ((b.f / b.n) * 100 > errL || b.s / b.n > p95L));
+-    const bi = breakIndex >= 0 ? breakIndex : degradationIndex;
+-    rules = [
+-      { name: 'Pre-break error rate', val: errorPct.toFixed(2) + '%', lim: 'observe degradation / breaking point', s: 'pass' },
+-      { name: 'Breaking point', val: bi >= 0 ? ((tl[bi].users || '?') + ' users') : 'Not reached', lim: 'capacity discovery', s: 'pass' }
+-    ];
+-  } else {
+-    rules = [
+-      { name: 'Error rate', val: errorPct.toFixed(2) + '%', lim: 'pass ≤ ' + errL + '% · warn ≤ ' + warnErr + '%', s: errorPct <= errL ? 'pass' : errorPct <= warnErr ? 'warn' : 'fail' },
+-      { name: 'p95', val: Math.round(t.p95) + ' ms', lim: 'pass ≤ ' + p95L + ' ms · warn ≤ ' + Math.round(p95L * 1.5) + ' ms', s: t.p95 <= p95L ? 'pass' : t.p95 <= p95L * 1.5 ? 'warn' : 'fail' },
+-      { name: 'p99', val: Math.round(t.p99) + ' ms', lim: 'pass ≤ ' + p99L + ' ms · warn ≤ ' + Math.round(p99L * 1.5) + ' ms', s: t.p99 <= p99L ? 'pass' : t.p99 <= p99L * 1.5 ? 'warn' : 'fail' }
+-    ];
+-    if (rL > 0) rules.push({ name: 'Throughput', val: t.rps.toFixed(1) + ' req/s', lim: 'pass ≥ ' + rL + ' · warn ≥ ' + (rL * .9).toFixed(1), s: t.rps >= rL ? 'pass' : t.rps >= rL * .9 ? 'warn' : 'fail' });
+-    if (ty === 'spike') rules.push({ name: 'Recovery', val: recoverySec === null ? 'Not recovered' : fmtT(recoverySec), lim: '≤ ' + fmtT(recoveryL) + ' and ≤120% baseline p95', s: recoverySec === null ? 'fail' : recoverySec <= recoveryL ? 'pass' : 'warn' });
+-    if (ty === 'soak') rules.push({ name: 'Latency drift', val: driftPct.toFixed(1) + '%', lim: 'pass ≤ 20% · warn ≤ 30%', s: driftPct <= 20 ? 'pass' : driftPct <= 30 ? 'warn' : 'fail' });
+-  }
+-  const st = rules.some(r => r.s === 'fail') ? 'fail' : rules.some(r => r.s === 'warn') ? 'warn' : 'pass';
+-  let note = '';
+-  if (ty === 'stress') { const i = tl.findIndex(b => b.n && ((b.f / b.n) * 100 > warnErr || b.s / b.n > p95L)); note = i < 0 ? 'No degradation threshold was crossed in this run; continue increasing load in a controlled stress test to find the capacity boundary.' : 'Degradation point: approximately ' + (tl[i].users || '?') + ' users, ' + fmtT(i * R.w) + ' into the test. Stress testing is treated as capacity discovery, not a normal pass/fail load gate.'; }
+-  if (ty === 'spike') { note = recoverySec === null ? 'Response time did not recover to ≤120% of baseline p95.' : 'Recovered to ≤120% of baseline p95 (~' + Math.round(spikeBase) + ' ms) in ' + fmtT(recoverySec) + ' after peak load; target is ≤' + fmtT(recoveryL) + '.'; }
+-  if (ty === 'soak') { note = 'Latency drift uses p95 response time, comparing the first 10% of the run with the last 10%. CPU, memory and connection-pool trends require JMeter/backend monitoring data and are not inferred from this CSV.'; }
++const errorPct = t.er * 100;
++const DEGRADE_ERR = 5; // stress: a slice is degraded when over 5% of its requests fail or its p95 passes the limit
++const grade = (v, lim, le) => le ? (v <= lim ? 'pass' : v <= lim * 1.5 ? 'warn' : 'fail') : (v >= lim ? 'pass' : v >= lim * .9 ? 'warn' : 'fail');
++const peak = R.peakUsers, win10 = Math.max(1, Math.ceil(tl.length * .1));
++const spikeStart = peak > 1 ? tl.findIndex(b => b.users >= peak * .5) : -1;
++let spikeEnd = -1; for (let k = tl.length - 1; k >= 0; k--) if (tl[k].users >= peak * .5) { spikeEnd = k; break; }
++const base = winStat(ty === 'spike' && spikeStart > 0 ? tl.slice(0, spikeStart) : tl.slice(0, win10));
++const hasPost = spikeEnd >= 0 && spikeEnd < tl.length - 1;
++const recIdx = ty === 'spike' && hasPost ? tl.findIndex((b, k) => k > spikeEnd && b.n >= 5 && b.p95 <= 1.2 * base.p95) : -1;
++const recoverySec = recIdx < 0 ? null : (recIdx - spikeEnd) * R.w;
++const firstW = winStat(tl.slice(0, win10)), lastW = winStat(tl.slice(-win10));
++const driftPct = firstW.p95 ? (lastW.p95 - firstW.p95) / firstW.p95 * 100 : 0;
++const bi = ty === 'stress' ? tl.findIndex(b => b.n >= 10 && ((b.f / b.n) * 100 > DEGRADE_ERR || b.p95 > p95L)) : -1;
++const stableW = winStat(bi < 0 ? tl : tl.slice(0, Math.max(bi, 1)));
++const spikeW = ty === 'spike' && spikeStart >= 0 ? winStat(tl.slice(spikeStart, spikeEnd + 1)) : null; // spike = slices with users >= 50% of peak
++const V = spikeW ? { er: spikeW.er, p95: spikeW.p95, p99: spikeW.p99 } : { er: errorPct, p95: t.p95, p99: t.p99 }, sfx = spikeW ? ' (during spike)' : '';
++let rules = [];
++if (ty === 'stress') {
++rules = [
++{ name: 'Error rate (whole run)', val: errorPct.toFixed(2) + '%', lim: 'pass ≤ ' + errL + '% · warn ≤ ' + warnErr + '%', s: errorPct <= errL ? 'pass' : errorPct <= warnErr ? 'warn' : 'fail' },
++{ name: 'p95 before breaking point', val: Math.round(stableW.p95) + ' ms', lim: 'pass ≤ ' + p95L + ' ms · warn ≤ ' + Math.round(p95L * 1.5) + ' ms', s: grade(stableW.p95, p95L, 1) },
++{ name: 'Breaking point', val: bi >= 0 ? '~' + (tl[bi].users || '?') + ' users' : 'Not reached', lim: 'capacity discovery', s: 'pass' }
++];
++} else {
++rules = [
++{ name: 'Error rate' + sfx, val: V.er.toFixed(2) + '%', lim: 'pass ≤ ' + errL + '% · warn ≤ ' + warnErr + '%', s: V.er <= errL ? 'pass' : V.er <= warnErr ? 'warn' : 'fail' },
++{ name: 'p95' + sfx, val: Math.round(V.p95) + ' ms', lim: 'pass ≤ ' + p95L + ' ms · warn ≤ ' + Math.round(p95L * 1.5) + ' ms', s: grade(V.p95, p95L, 1) },
++{ name: 'p99' + sfx, val: Math.round(V.p99) + ' ms', lim: 'pass ≤ ' + p99L + ' ms · warn ≤ ' + Math.round(p99L * 1.5) + ' ms', s: grade(V.p99, p99L, 1) }
++];
++if (rL > 0) rules.push({ name: 'Throughput', val: t.rps.toFixed(1) + ' req/s', lim: 'pass ≥ ' + rL + ' · warn ≥ ' + (rL * .9).toFixed(1), s: grade(t.rps, rL, 0) });
++if (ty === 'spike') rules.push({ name: 'Recovery', val: !hasPost ? 'No data after spike' : recoverySec === null ? 'Not recovered' : fmtT(recoverySec), lim: '≤ ' + fmtT(recoveryL) + ' and ≤120% of baseline p95', s: !hasPost ? 'warn' : recoverySec === null ? 'fail' : recoverySec <= recoveryL ? 'pass' : 'warn' });
++if (ty === 'soak') rules.push({ name: 'Latency drift', val: (driftPct >= 0 ? '+' : '') + driftPct.toFixed(1) + '%', lim: 'pass ≤ 20% · warn ≤ 30%', s: driftPct <= 20 ? 'pass' : driftPct <= 30 ? 'warn' : 'fail' });
++}
++const tol = Math.max(0, num('tTol', 10)), cmp = BASE ? compareRuns(R, BASE, tol) : null;
++if (cmp) rules.push(...cmp.rules);
++const st = rules.some(r => r.s === 'fail') ? 'fail' : rules.some(r => r.s === 'warn') ? 'warn' : 'pass';
++let note = '';
++if (ty === 'stress') note = bi < 0 ? 'No degradation point reached: every interval stayed under 5% errors and within the p95 limit. Raise the load to find the capacity boundary.' : 'Breaking point: errors passed 5% or p95 passed ' + p95L + ' ms at about ' + (tl[bi].users || '?') + ' users, ' + fmtT(bi * R.w) + ' into the test. The verdict also grades the error rate of the whole run.';
++if (ty === 'spike') note = !hasPost ? 'The run ends before the spike does, so recovery cannot be measured.' : recoverySec === null ? 'Response time did not return to ≤120% of the baseline p95 (~' + Math.round(base.p95) + ' ms) after the spike.' : 'Back to ≤120% of the baseline p95 (~' + Math.round(base.p95) + ' ms) ' + fmtT(recoverySec) + ' after the spike ended; target is ≤' + fmtT(recoveryL) + '.';
++if (ty === 'soak') note = 'Latency drift compares p95 in the first 10% of the run (' + Math.round(firstW.p95) + ' ms) with the last 10% (' + Math.round(lastW.p95) + ' ms). CPU, memory and connection-pool trends need monitoring data and are not inferred from this CSV.';
+   if (st === 'warn') note += (note ? ' ' : '') + 'Fix the flagged issues and re-run the test.';
+   R.items.forEach(i => { const er = i.er * 100; i.s = ty === 'stress' ? (er > warnErr || i.p95 > p95L * 1.5 ? 'fail' : er > errL || i.p95 > p95L ? 'warn' : 'pass') : (er <= errL && i.p95 <= p95L && i.p99 <= p99L ? 'pass' : er <= warnErr && i.p95 <= p95L * 1.5 && i.p99 <= p99L * 1.5 ? 'warn' : 'fail'); });
+   const rk = { fail: 0, warn: 1, pass: 2 }, val = (i, k) => k === 'st' ? rk[i.s] : i[k];
+@@ -211,6 +287,16 @@ function render() {
+   const th = (k, l) => '<th data-k="' + k + '"' + (k === 'name' ? ' style="text-align:left"' : '') + '>' + l + (sk === k ? ' <i class="fas fa-caret-down"></i>' : '') + '</th>';
+   const sev = { pass: 'success', warn: 'warning', fail: 'danger' }, word = { pass: 'PASSED', warn: 'WARNING · FIX &amp; RE-RUN', fail: 'FAILED' };
+   $('metaFile').textContent = R.name; $('metaType').textContent = ty + ' test' + (auto ? ' (auto-detected)' : ''); $('metaRows').textContent = R.rows.toLocaleString() + ' samples'; $('runMetaBar').style.display = '';
++  const badge = v => '<span class="badge ' + ({ worse: 'pill-fail', better: 'pill-pass' }[v] || 'pill-neutral') + '">' + ({ worse: 'Worse', better: 'Better', same: 'Same', info: 'Info' }[v]) + '</span>';
++  const f1 = x => Math.round(x.p95) + ' ms', f2 = x => (x.er * 100).toFixed(2) + '%', stat = { worse: ['pill-fail', 'Regression'], better: ['pill-pass', 'Improved'], same: ['pill-neutral', 'Same'], new: ['pill-neutral', 'New'], removed: ['pill-neutral', 'Removed'], low: ['pill-neutral', 'Low data'] };
++  const cmpHtml = cmp ? '<div class="summary-card mb-4"><h4 class="summary-card-title"><i class="fas fa-code-compare me-2"></i>Compared with baseline: ' + esc(BASE.name) + '</h4>' +
++    (cmp.notes.length ? '<div class="alert alert-warning small">' + cmp.notes.map(esc).join(' ') + '</div>' : '') +
++    '<div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th style="text-align:left">Metric</th><th>Baseline</th><th>Now</th><th>Change</th><th>Result</th></tr></thead><tbody>' +
++    cmp.metrics.map(m => '<tr><td>' + m.label + '</td><td>' + m.baseline + '</td><td>' + m.current + '</td><td>' + sgn(m.change, m.mode === 'pp' ? ' pp' : '%') + '</td><td>' + badge(m.v) + '</td></tr>').join('') + '</tbody></table></div>' +
++    '<div class="chart-container" style="height:260px"><canvas id="c3"></canvas></div>' +
++    '<div class="small text-muted mt-3 mb-2">Endpoints: ' + ['worse', 'new', 'removed', 'low', 'same', 'better'].filter(k => cmp.counts[k]).map(k => cmp.counts[k] + ' ' + stat[k][1].toLowerCase()).join(' · ') + '</div>' +
++    '<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th style="text-align:left">Endpoint</th><th>p95 baseline</th><th>p95 now</th><th>Change</th><th>Errors baseline</th><th>Errors now</th><th>Result</th></tr></thead><tbody>' +
++    cmp.rows.map(r => '<tr><td class="lbl">' + esc(disp(r.name)) + '</td><td>' + (r.b ? f1(r.b) : '—') + '</td><td>' + (r.c ? f1(r.c) : '—') + '</td><td>' + (r.dp != null ? sgn(r.dp, '%') : '—') + '</td><td>' + (r.b ? f2(r.b) : '—') + '</td><td>' + (r.c ? f2(r.c) : '—') + '</td><td><span class="badge ' + stat[r.status][0] + '">' + stat[r.status][1] + '</span></td></tr>').join('') + '</tbody></table></div></div>' : '';
+   $('out').innerHTML =
+     '<section class="overall-status ' + st + ' mb-4"><div><div class="overall-status-main"><span class="badge status-' + sev[st] + '">' + word[st] + '</span><span>' + ty[0].toUpperCase() + ty.slice(1) + ' test · ' + fmtT(R.dur) + '</span></div>' +
+     '<div class="chip-row">' + rules.map(r => '<span class="badge pill-' + r.s + '">' + r.name + ' ' + r.val + ' (' + r.lim + ')</span>').join('') + '</div>' +
+@@ -219,7 +305,7 @@ function render() {
+     kpi('clock', 'bg-info', Math.round(t.avg) + 'ms', 'Avg Response Time', 'Mean of all samples') + kpi('gauge-high', 'bg-warning', Math.round(t.p95) + 'ms', 'p95 Response Time', '95% of requests were faster') +
+     kpi('bolt', 'bg-primary', Math.round(t.p99) + 'ms', 'p99 Response Time', 'Slowest 1% start here') + kpi('arrow-trend-up', 'bg-success', t.rps.toFixed(1) + '/s', 'Throughput', 'Requests per second') +
+     kpi('users', 'bg-info', R.peakUsers || 'n/a', 'Peak Users', 'Most active users at once') + kpi('hourglass-half', 'bg-warning', fmtT(R.dur), 'Test Duration', 'First to last sample') + '</section>' +
+-    '<div class="row mb-4"><div class="col-lg-6 mb-3 mb-lg-0"><div class="chart-card"><h4 class="summary-card-title"><i class="fas fa-chart-line me-2"></i>Response Time &amp; Errors</h4><div class="chart-container"><canvas id="c1"></canvas></div></div></div>' +
++    cmpHtml + '<div class="row mb-4"><div class="col-lg-6 mb-3 mb-lg-0"><div class="chart-card"><h4 class="summary-card-title"><i class="fas fa-chart-line me-2"></i>Response Time &amp; Errors</h4><div class="chart-container"><canvas id="c1"></canvas></div></div></div>' +
+     '<div class="col-lg-6"><div class="chart-card"><h4 class="summary-card-title"><i class="fas fa-users me-2"></i>Throughput &amp; Users</h4><div class="chart-container"><canvas id="c2"></canvas></div></div></div></div>' +
+     '<div class="summary-card mb-4"><h4 class="summary-card-title"><i class="fas fa-list-check me-2"></i>Endpoints</h4><div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr>' + th('name', 'Label') + th('n', 'Requests') + th('er', 'Error %') + th('avg', 'Avg ms') + th('p95', 'p95') + th('p99', 'p99') + th('mx', 'Max') + th('rps', 'Req/s') + th('st', 'Status') + '</tr></thead><tbody>' +
+     items.map(i => '<tr><td class="lbl">' + esc(i.name) + '</td><td>' + i.n.toLocaleString() + '</td><td>' + (i.er * 100).toFixed(2) + '</td><td>' + Math.round(i.avg) + '</td><td>' + Math.round(i.p95) + '</td><td>' + Math.round(i.p99) + '</td><td>' + i.mx + '</td><td>' + i.rps.toFixed(1) + '</td><td><span class="badge pill-' + i.s + '">' + i.s.toUpperCase() + '</span></td></tr>').join('') + '</tbody></table></div></div>' +
+@@ -232,10 +318,13 @@ function render() {
+     new Chart($('c1'), { type: 'line', data: { labels: lb, datasets: [{ label: 'Avg response (ms)', data: tl.map(b => b.n ? b.s / b.n : null), borderColor: '#8E44AD', tension: .25, pointRadius: 0, yAxisID: 'y' }, { type: 'bar', label: 'Errors', data: tl.map(b => b.f), backgroundColor: '#dc2626', yAxisID: 'y1' }] }, options: o('ms', 'errors') }),
+     new Chart($('c2'), { type: 'line', data: { labels: lb, datasets: [{ label: 'Throughput (req/s)', data: tl.map(b => b.n / R.w), borderColor: '#16a34a', tension: .25, pointRadius: 0, yAxisID: 'y' }, { label: 'Active users', data: tl.map(b => b.users), borderColor: '#d63384', pointRadius: 0, yAxisID: 'y1' }] }, options: o('req/s', 'users') })
+   ];
++  if (cmp) charts.push(new Chart($('c3'), { type: 'line', data: { labels: Array.from({ length: 50 }, (_, i) => Math.round(i / 49 * 100) + '%'), datasets: [{ label: 'Baseline p95 (ms)', data: resample(BASE.tl, 50), borderColor: '#7f8c8d', borderDash: [6, 4], pointRadius: 0, tension: .25, spanGaps: true }, { label: 'Now p95 (ms)', data: resample(tl, 50), borderColor: '#8E44AD', pointRadius: 0, tension: .25, spanGaps: true }] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { title: { display: true, text: 'p95 (ms)' } }, x: { title: { display: true, text: 'Progress through the run' } } } } }));
++  $('baseBtns').classList.remove('d-none'); $('baseBtn').classList.toggle('d-none', !!BASE); $('clearBaseBtn').classList.toggle('d-none', !BASE); $('tolWrap').classList.toggle('d-none', !BASE);
+   $('exportBtns').classList.remove('d-none');
+   $('exportPdfBtn').onclick = () => window.print();
+-  $('exportHtmlBtn').onclick = () => {
+-    const b = new Blob([JSON.stringify({ source: R.name, testType: ty, verdict: { status: st, rules, criteria: { maxErrorRatePercent: errL, warningErrorRatePercent: warnErr, maxP95Ms: p95L, maxP99Ms: p99L, minThroughput: rL || null, maxRecoverySeconds: recoveryL }, notes: note }, peakUsers: R.peakUsers, totals: t, endpoints: R.items }, null, 2)], { type: 'application/json' });
++  $('exportHtmlBtn').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([buildStandaloneHtml()], { type: 'text/html' })); a.download = 'jmeter-report.html'; a.click(); };
++  $('exportJsonBtn').onclick = () => {
++    const b = new Blob([JSON.stringify({ source: R.name, testType: ty, verdict: { status: st, rules, criteria: { maxErrorRatePercent: errL, warningErrorRatePercent: warnErr, maxP95Ms: p95L, maxP99Ms: p99L, minThroughput: rL || null, maxRecoverySeconds: recoveryL }, notes: note }, peakUsers: R.peakUsers, comparison: cmp ? { baseline: BASE.name, tolerancePercent: cmp.tol, metrics: cmp.metrics, endpoints: cmp.rows.map(r => ({ name: r.name, status: r.status, baselineP95Ms: r.b ? Math.round(r.b.p95) : null, currentP95Ms: r.c ? Math.round(r.c.p95) : null, p95ChangePercent: r.dp == null ? null : +r.dp.toFixed(1), errorRateChangePp: r.de == null ? null : +r.de.toFixed(2) })), rules: cmp.rules } : null, totals: t, endpoints: R.items }, null, 2)], { type: 'application/json' });
+     const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'jmeter-summary.json'; a.click();
+   };
+ }
+@@ -244,6 +333,10 @@ $('out').onclick = e => { const k = e.target.dataset && e.target.dataset.k; if (
+ $('type').addEventListener('input', () => { touched = false; render(); });
+ ['tErr', 'tWarn', 'tP95', 'tP99'].forEach(id => $(id).addEventListener('input', () => { touched = true; render(); }));
+ $('tRps').addEventListener('input', render);
++$('baseBtn').onclick = () => $('baseFile').click();
++$('baseFile').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadBaseline(f); };
++$('clearBaseBtn').onclick = () => clearBaseline();
++$('tTol').addEventListener('input', render);
+ $('drop').onclick = () => $('file').click();
+ $('file').onchange = e => e.target.files[0] && parse(e.target.files[0]);
+ $('drop').ondragover = e => { e.preventDefault(); $('drop').classList.add('over'); };
+@@ -251,6 +344,22 @@ $('drop').ondragleave = () => $('drop').classList.remove('over');
+ $('newBtn').onclick = () => location.reload();
+ $('drop').ondrop = e => { e.preventDefault(); $('drop').classList.remove('over'); e.dataTransfer.files[0] && parse(e.dataTransfer.files[0]); };
+ 
++// Standalone HTML export: one offline file with the verdict, tables and charts (as images).
++const EXPORT_CSS = ':root{--bd:#dee2e6;--mu:#6c757d;--ok:#27ae60;--wa:#f39c12;--er:#e74c3c}*{box-sizing:border-box}body{font:14px/1.45 system-ui,sans-serif;color:#212529;background:#f5f6fa;margin:0;padding:20px}.wrap{max-width:1200px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}.meta{color:var(--mu);margin-bottom:16px}'
++  + '.overall-status,.kpi-card,.chart-card,.summary-card{background:#fff;border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:16px}.overall-status.pass{border-left:6px solid var(--ok)}.overall-status.warn{border-left:6px solid var(--wa)}.overall-status.fail{border-left:6px solid var(--er)}'
++  + '.badge{display:inline-block;padding:3px 10px;border-radius:99px;color:#fff;font-size:12px;font-weight:600}.status-success,.pill-pass{background:var(--ok)}.status-warning,.pill-warn{background:var(--wa)}.status-danger,.pill-fail{background:var(--er)}.chip-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.overall-status-main{display:flex;gap:12px;align-items:center;font-weight:600}'
++  + '.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}.kpi-card{margin:0}.kpi-icon,.kpi-tooltip{display:none}.kpi-content h3{font-size:12px;color:var(--mu);margin:0 0 4px;font-weight:600}.kpi-value{font-size:22px;font-weight:700}'
++  + '.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}.chart-card img{width:100%;height:auto;display:block}.summary-card-title{font-size:16px;margin:0 0 10px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border-bottom:1px solid var(--bd);text-align:right}th:first-child,td:first-child,td.lbl{text-align:left;word-break:break-all}th{color:var(--mu);font-size:12px}.text-end{text-align:right}.pill-neutral{background:#7f8c8d}.alert{background:#fff3cd;border:1px solid #ffecb5;border-radius:8px;padding:6px 10px;margin-bottom:10px}.chart-container{height:260px}.text-muted,.small{color:var(--mu)}.small{font-size:12px}.mt-1{margin-top:4px}.mt-2{margin-top:8px}.mb-4{margin-bottom:16px}'
++  + '@media print{body{background:#fff;padding:0}.overall-status,.kpi-card,.chart-card,.summary-card,tr{break-inside:avoid}}';
++function buildStandaloneHtml() {
++  const imgs = charts.map(c => { try { c.resize(1000, 380); return c.toBase64Image(); } finally { c.resize(); } });
++  const clone = $('out').cloneNode(true);
++  clone.querySelectorAll('canvas').forEach(cv => { const im = document.createElement('img'); im.alt = 'chart'; im.src = imgs[{ c1: 0, c2: 1, c3: 2 }[cv.id]] || ''; cv.replaceWith(im); });
++  clone.querySelectorAll('i').forEach(x => x.remove());
++  clone.querySelectorAll('[data-k]').forEach(x => x.removeAttribute('data-k'));
++  return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JMeter report · ' + esc(R.name) + '</title><style>' + EXPORT_CSS + '</style></head><body><div class="wrap"><h1>JMeter Report</h1><div class="meta">' + esc(R.name) + ' · ' + esc($('metaType').textContent) + ' · ' + esc($('metaRows').textContent) + ' · generated ' + esc(new Date().toLocaleString()) + ' by Test Report Studio</div>' + clone.innerHTML + '</div></body></html>';
++}
++
+ // Print / Save as PDF: swap charts for sharp full-width images so nothing is cut off on any paper size.
+ let prevTheme = null;
+ window.addEventListener('beforeprint', () => {
+diff --git a/postman.html b/postman.html
+index abcc6c0..9094765 100644
+--- a/postman.html
++++ b/postman.html
+@@ -3,7 +3,7 @@
+  * 🧑‍💻 Created by Fidelis Ogbeni
+  * 🕓 Version: 1.0.0
+  * 📅 Year: 2025
+- * 📬 GitHub: https://github.com/fidelisogbeni/postman-html-reporter
++ * 📬 GitHub: https://github.com/fidelanders/Test-Report-Studio
+  * 
+  * 📄 Licensed under MIT (see LICENSE file)
+  * This tool converts Postman JSON test results into a beautiful HTML report.
+@@ -26,8 +26,6 @@
+   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+-  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+-  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+ 
+   <link rel="stylesheet" href="css/styles.css">
+   <link rel="stylesheet" href="css/themeStyles.css" id="themeStyles">
+@@ -48,6 +46,10 @@
+         <button id="exportHtmlBtn" class="btn btn-outline-primary me-2 no-print" onclick="exportReportToHTML()">
+           <i class="fas fa-file-code me-2"></i>Export HTML
+         </button>
++        <div id="exportOptions" class="small me-3 no-print">
++          <div class="form-check mb-0"><input class="form-check-input" type="checkbox" id="maskSecretsToggle" checked><label class="form-check-label" for="maskSecretsToggle" title="Hides passwords, tokens, API keys and cookies in the exported file">Mask secrets in HTML export</label></div>
++          <div class="form-check mb-0"><input class="form-check-input" type="checkbox" id="includeBodiesToggle" checked><label class="form-check-label" for="includeBodiesToggle">Include bodies &amp; headers</label></div>
++        </div>
+         <div class="theme-toggle">
+           <button class="btn btn-outline-secondary theme-btn active" onclick="switchTheme('light')" title="Light theme">
+             <i class="fas fa-sun"></i>
+@@ -59,6 +61,8 @@
+       </div>
+     </header>
+ 
++    <div id="pdfHint" class="alert alert-info py-2 small d-none no-print" role="status">In the print window choose <strong>Save as PDF</strong> as the destination. Any paper size works; the layout adapts. The tab you are viewing (All, Passed or Failed) is the one that prints.</div>
++
+     <!-- Run Metadata Bar -->
+     <div id="runMetaBar" class="run-meta-bar mb-3" style="display: none;">
+       <span class="run-meta-item"><i class="fas fa-file-code me-1"></i><span id="metaFormatBadge" class="badge bg-secondary">Format</span></span>
+@@ -69,6 +73,8 @@
+     <!-- Main Content -->
+     <div id="reportContainer" style="display: none;">
+       <!-- Overall Status (computed from real results; thresholds are adjustable) -->
++      <div id="runNotices"></div>
++
+       <section class="overall-status mb-4" id="overallStatus" style="display: none;">
+         <div class="overall-status-main">
+           <span id="overallStatusBadge" class="badge">-</span>
+@@ -339,6 +345,8 @@
+             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+           </div>
+           <div class="modal-body">
++            <div id="detailSummary" class="small text-muted mb-2 text-break"></div>
++            <div id="detailError" class="alert alert-danger py-2 small d-none"></div>
+             <ul class="nav nav-tabs" id="detailTab" role="tablist">
+               <li class="nav-item" role="presentation">
+                 <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#detailRequest" type="button" role="tab">Request</button>
+@@ -349,9 +357,21 @@
+             </ul>
+             <div class="tab-content pt-3">
+               <div class="tab-pane fade show active" id="detailRequest" role="tabpanel">
++                <h6 class="small text-uppercase text-muted">Headers</h6>
++                <table class="table table-sm detail-headers"><tbody id="requestHeadersBody"></tbody></table>
++                <div class="d-flex justify-content-between align-items-center mb-1">
++                  <h6 class="small text-uppercase text-muted mb-0">Body <span id="requestBodyMeta" class="ms-2 text-lowercase"></span></h6>
++                  <span><button type="button" class="btn btn-outline-secondary btn-sm me-1" onclick="copyBody('request')"><i class="fas fa-copy me-1"></i>Copy</button><button type="button" class="btn btn-outline-secondary btn-sm" onclick="downloadBody('request')"><i class="fas fa-download me-1"></i>Download</button></span>
++                </div>
+                 <pre class="detail-body-pre"><code id="requestBodyContent"></code></pre>
+               </div>
+               <div class="tab-pane fade" id="detailResponse" role="tabpanel">
++                <h6 class="small text-uppercase text-muted">Headers</h6>
++                <table class="table table-sm detail-headers"><tbody id="responseHeadersBody"></tbody></table>
++                <div class="d-flex justify-content-between align-items-center mb-1">
++                  <h6 class="small text-uppercase text-muted mb-0">Body <span id="responseBodyMeta" class="ms-2 text-lowercase"></span></h6>
++                  <span><button type="button" class="btn btn-outline-secondary btn-sm me-1" onclick="copyBody('response')"><i class="fas fa-copy me-1"></i>Copy</button><button type="button" class="btn btn-outline-secondary btn-sm" onclick="downloadBody('response')"><i class="fas fa-download me-1"></i>Download</button></span>
++                </div>
+                 <pre class="detail-body-pre"><code id="responseBodyContent"></code></pre>
+               </div>
+             </div>
+diff --git a/script/app.js b/script/app.js
+index b320c8f..e986831 100644
+--- a/script/app.js
++++ b/script/app.js
+@@ -8,7 +8,7 @@ const failurePanel = document.getElementById('failurePanel');
+ const viewFailedBtn = document.getElementById('viewFailedBtn');
+ 
+ // Initialize Bootstrap tabs
+-const resultsTab = new bootstrap.Tab(document.getElementById('all-tab'));
++const resultsTab = (typeof bootstrap !== 'undefined' && document.getElementById('all-tab')) ? new bootstrap.Tab(document.getElementById('all-tab')) : null;
+ 
+ // Pretty print JSON function
+ 
+@@ -92,6 +92,8 @@ function decodeResponseBody(response, result) {
+ // likely reason "Request" showed blank for requests that do have a body.
+ function extractRequestBody(request) {
+     const body = request?.body;
++    if (!body && typeof request?.rawModeData === 'string' && request.rawModeData) return request.rawModeData;
++    if (!body && typeof request?.data === 'string' && request.data) return request.data;
+     if (!body) return '';
+     if (typeof body === 'string') return body;
+ 
+@@ -125,6 +127,49 @@ function detectReportFormat(data) {
+     return 'unknown';
+ }
+ 
++// ---- Capture helpers -------------------------------------------------
++// Headers arrive as [{key,value}] (Newman / Postman), as a plain object, or as
++// a "Key: Value" text block in older exports.
++function headerList(h) {
++    if (!h) return [];
++    if (typeof h === 'string') {
++        return h.split(/\r?\n/).map(l => { const i = l.indexOf(':'); return i > 0 ? { key: l.slice(0, i).trim(), value: l.slice(i + 1).trim() } : null; }).filter(Boolean);
++    }
++    const arr = Array.isArray(h) ? h : (Array.isArray(h.members) ? h.members : Object.entries(h).map(([key, value]) => ({ key, value })));
++    return arr.filter(x => x && (x.key || x.name) && !x.disabled).map(x => ({ key: String(x.key || x.name), value: String(x.value ?? '') }));
++}
++function headerValue(list, name) {
++    const h = (list || []).find(x => x.key.toLowerCase() === name);
++    return h ? h.value : '';
++}
++// item id -> "Folder / Subfolder", from the collection tree Newman embeds in its report
++function buildFolderMap(items, trail = [], map = {}) {
++    (items || []).forEach(it => {
++        if (Array.isArray(it.item)) buildFolderMap(it.item, trail.concat(it.name || ''), map);
++        else if (it.id) map[it.id] = trail.join(' / ');
++    });
++    return map;
++}
++function mapAssertion(a) {
++    return {
++        name: a.assertion || a.name || 'Unnamed assertion',
++        status: a.skipped ? 'skipped' : (a.error ? 'failed' : 'passed'),
++        errorMessage: a.error ? ((typeof a.error === 'string' ? a.error : a.error.message) || null) : null
++    };
++}
++// One status per request. A request that never completed, or has no tests,
++// must not be reported as a pass.
++function requestStatus(t) {
++    if (t.requestError || (t.scriptErrors && t.scriptErrors.length)) return 'error';
++    if (t.assertions.some(a => a.status === 'failed')) return 'failed';
++    if (t.assertions.length === 0) return 'notests';
++    if (t.assertions.every(a => a.status === 'skipped')) return 'skipped';
++    return 'passed';
++}
++function formatBytes(n) {
++    return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
++}
++
+ function toggleVisibility(elementId, iconElement = null) {
+     const element = document.getElementById(elementId);
+     if (!element) return;
+@@ -157,9 +202,9 @@ function renderTests(filtered, containerId) {
+     }
+ 
+     resultsEl.innerHTML = filtered.map((item, index) => {
+-        const hasFailed = item.assertions.some(a => a.status === 'failed');
+-        const statusClass = hasFailed ? 'failed' : 'passed';
+-        const statusText = hasFailed ? 'FAIL' : 'PASS';
++        const st = item.status || requestStatus(item);
++        const statusClass = { failed: 'failed', error: 'failed', passed: 'passed', skipped: 'skipped', notests: 'notests' }[st];
++        const statusText = { failed: 'FAIL', error: 'ERROR', passed: 'PASS', skipped: 'SKIPPED', notests: 'NO TESTS' }[st];
+ 
+         return `
+         <div class="test-card ${statusClass}">
+@@ -176,11 +221,16 @@ function renderTests(filtered, containerId) {
+                 </button>
+             </div>
+ 
++            ${(item.folder || window.maxIteration > 1) ? `<div class="small text-muted mt-1">${item.folder ? '<i class="fas fa-folder me-1"></i>' + escapeHtml(item.folder) : ''}${window.maxIteration > 1 ? ` <span class="badge bg-secondary ms-2">Iteration ${item.iteration}</span>` : ''}</div>` : ''}
++
+             <div class="small mt-1">
+                 <strong>Response:</strong>
+                 <span class="text-muted">${escapeHtml(safe(item.responseCode))} ${escapeHtml(safe(item.responseStatus, ''))} | Time: ${safe(item.time, 0)}ms</span>
+             </div>
+ 
++            ${item.requestError ? `<div class="alert alert-danger py-2 small mt-2 mb-0"><strong>Request failed:</strong> ${escapeHtml(item.requestError.message || item.requestError.code || 'Unknown error')}</div>` : ''}
++            ${(item.scriptErrors || []).map(m => `<div class="alert alert-warning py-2 small mt-2 mb-0"><strong>Script error:</strong> ${escapeHtml(m)}</div>`).join('')}
++
+             <div class="mt-3">
+                 ${(item.assertions.length > 0) ? item.assertions.map(assertion => `
+                 <div class="assertion ${assertion.status}">
+@@ -188,10 +238,11 @@ function renderTests(filtered, containerId) {
+                         <span>${escapeHtml(safe(assertion.name, 'Unnamed assertion'))}</span>
+                         <strong>${assertion.status.toUpperCase()}</strong>
+                     </div>
++                    ${assertion.errorMessage ? `<div class="assertion-msg small">${escapeHtml(assertion.errorMessage)}</div>` : ''}
+                 </div>`).join('') : '<div class="alert alert-secondary p-2">No assertions found for this request.</div>'}
+             </div>
+ 
+-            ${(item.requestBody || item.responseBody) ? `
++            ${(item.requestBody || item.responseBody || (item.requestHeaders || []).length || (item.responseHeaders || []).length || item.requestError) ? `
+             <div class="mt-3">
+                 <button class="btn btn-outline-primary btn-sm" onclick="openTestDetail(${item._id})">
+                     <i class="fas fa-magnifying-glass me-1"></i>View Request / Response
+@@ -208,19 +259,128 @@ function renderTests(filtered, containerId) {
+ // click came from. Only shows the request/response bodies - status,
+ // assertions, method, url, etc. are already visible on the card itself, so
+ // repeating them here was pure duplication.
++const BODY_DISPLAY_LIMIT = 200000;
++let currentDetail = null;
++
++function renderHeaders(elId, list) {
++    const el = document.getElementById(elId);
++    if (!el) return;
++    el.innerHTML = (list && list.length)
++        ? list.map(h => `<tr><td class="text-muted text-nowrap pe-3">${escapeHtml(h.key)}</td><td class="text-break">${escapeHtml(h.value)}</td></tr>`).join('')
++        : '<tr><td class="text-muted">(no headers captured)</td></tr>';
++}
++function showBody(codeId, metaId, text, emptyMsg) {
++    const code = document.getElementById(codeId), meta = document.getElementById(metaId);
++    if (!text) { code.textContent = emptyMsg; if (meta) meta.textContent = ''; return; }
++    const shown = String(prettyPrintJson(text));
++    code.textContent = shown.length > BODY_DISPLAY_LIMIT
++        ? shown.slice(0, BODY_DISPLAY_LIMIT) + '\n... (shortened for display - Copy or Download gives the full body)'
++        : shown;
++    if (meta) meta.textContent = formatBytes(new Blob([text]).size);
++}
++
++// Looks up a rendered test by its stable _id (assigned once in renderReport)
++// so the detail modal works no matter which tab (all/passed/failed) the
++// click came from.
+ function openTestDetail(id) {
+     const test = window.testsById ? window.testsById[id] : null;
+     if (!test) return;
++    currentDetail = test;
+ 
+     document.getElementById('testDetailTitle').textContent = safe(test.name, 'Unnamed Request');
+-
+-    document.getElementById('requestBodyContent').textContent =
+-        test.requestBody ? prettyPrintJson(test.requestBody) : '(no request body)';
+-    document.getElementById('responseBodyContent').textContent =
+-        test.responseBody ? prettyPrintJson(test.responseBody) : '(no response body)';
++    const sum = document.getElementById('detailSummary');
++    if (sum) sum.textContent = `${safe(test.method, '')} ${safe(test.url, '')}  |  ${safe(test.responseCode)} ${safe(test.responseStatus, '')}  |  ${safe(test.time, 0)} ms`;
++    const err = document.getElementById('detailError');
++    if (err) {
++        const msgs = [test.requestError ? 'Request failed: ' + (test.requestError.message || test.requestError.code || 'unknown error') : '']
++            .concat((test.scriptErrors || []).map(m => 'Script error: ' + m)).filter(Boolean);
++        err.textContent = msgs.join(' | ');
++        err.classList.toggle('d-none', msgs.length === 0);
++    }
++    renderHeaders('requestHeadersBody', test.requestHeaders);
++    renderHeaders('responseHeadersBody', test.responseHeaders);
++    showBody('requestBodyContent', 'requestBodyMeta', test.requestBody, '(no request body)');
++    showBody('responseBodyContent', 'responseBodyMeta', test.responseBody, test.requestError ? '(no response: the request did not complete)' : '(no response body)');
+ 
+     new bootstrap.Modal(document.getElementById('testDetailModal')).show();
+ }
++function copyBody(which) {
++    const text = currentDetail ? (currentDetail[which + 'Body'] || '') : '';
++    if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text); return; }
++    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
++}
++function downloadBody(which) {
++    if (!currentDetail) return;
++    const text = currentDetail[which + 'Body'] || '';
++    const ct = headerValue(currentDetail[which + 'Headers'], 'content-type');
++    const ext = /json/i.test(ct) || /^\s*[\[{]/.test(text) ? 'json' : /xml/i.test(ct) ? 'xml' : /html/i.test(ct) ? 'html' : 'txt';
++    const a = document.createElement('a');
++    a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
++    a.download = `${(currentDetail.name || 'request').replace(/[^\w.-]+/g, '_')}-${which}.${ext}`;
++    document.body.appendChild(a); a.click(); a.remove();
++}
++
++// ---- Masking, used by the HTML export so shared reports do not leak secrets ----
++const SENS = 'pass(?:word|wd)?|secret|token|api[-_]?key|authorization|cookie|session|credential|private[-_]?key|signature';
++const SENSITIVE_KEY = new RegExp(SENS, 'i');
++const MASK = '******';
++function maskJson(v) {
++    if (Array.isArray(v)) return v.map(maskJson);
++    if (v && typeof v === 'object') {
++        const o = {};
++        for (const k of Object.keys(v)) o[k] = (SENSITIVE_KEY.test(k) && (v[k] === null || typeof v[k] !== 'object')) ? MASK : maskJson(v[k]);
++        return o;
++    }
++    return v;
++}
++function maskText(text) {
++    if (!text) return text;
++    try { return JSON.stringify(maskJson(JSON.parse(text)), null, 2); } catch (e) { /* not JSON - fall through to pattern masking */ }
++    return String(text)
++        .replace(new RegExp('("?[\\w.-]*(?:' + SENS + ')[\\w.-]*"?\\s*[:=]\\s*)((?:Bearer|Basic)\\s+)?("(?:[^"\\\\]|\\\\.)*"|[^\\s&,;]+)', 'gi'), (m, k) => k + MASK)
++        .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]+/g, '$1 ' + MASK);
++}
++function maskUrl(url) {
++    return String(url || '').replace(new RegExp('([?&][^=&#]*(?:' + SENS + ')[^=&#]*=)[^&#]*', 'gi'), '$1' + MASK);
++}
++function maskHeader(h) {
++    return SENSITIVE_KEY.test(h.key) ? { key: h.key, value: MASK } : { key: h.key, value: maskText(h.value) };
++}
++// JSON that is safe to place inside a <script> element (a response body that
++// contains "</script>" must not be able to end the element or inject markup).
++function safeJson(obj) {
++    return JSON.stringify(obj).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
++}
++function prepareExportTests() {
++    const mask = document.getElementById('maskSecretsToggle')?.checked !== false;
++    const bodies = document.getElementById('includeBodiesToggle')?.checked !== false;
++    const out = {};
++    for (const [id, t] of Object.entries(window.testsById || {})) {
++        const c = { ...t };
++        if (!bodies) { c.requestBody = ''; c.responseBody = ''; c.requestHeaders = []; c.responseHeaders = []; }
++        else if (mask) {
++            c.requestBody = maskText(t.requestBody); c.responseBody = maskText(t.responseBody);
++            c.requestHeaders = (t.requestHeaders || []).map(maskHeader); c.responseHeaders = (t.responseHeaders || []).map(maskHeader);
++        }
++        if (mask) c.url = maskUrl(t.url);
++        out[id] = c;
++    }
++    return out;
++}
++
++function renderNotices() {
++    const el = document.getElementById('runNotices');
++    if (!el) return;
++    const n = [];
++    const withBody = allTests.filter(t => t.requestBody || t.responseBody).length;
++    const withHeaders = allTests.filter(t => (t.requestHeaders || []).length || (t.responseHeaders || []).length).length;
++    if (!withBody) n.push(['warning', 'This file contains no request or response bodies' + (withHeaders ? '' : ' or headers') + ', so the request/response viewer has nothing to show. Newman\'s JSON reporter includes them by default (<code>newman run ... -r json --reporter-json-export out.json</code>). With the Postman CLI, add <code>--reporter-json-structure newman</code> and do not pass the <code>--reporter-json-omit...</code> options. Exports from the Postman app may not include bodies.']);
++    const count = k => allTests.filter(t => t.status === k).length;
++    if (count('error')) n.push(['danger', `${count('error')} request${count('error') > 1 ? 's' : ''} did not complete or hit a script error (for example connection refused). They are counted as failures.`]);
++    if (count('notests')) n.push(['secondary', `${count('notests')} request${count('notests') > 1 ? 's have' : ' has'} no tests, so ${count('notests') > 1 ? 'they are' : 'it is'} not counted as passed.`]);
++    if (count('skipped')) n.push(['secondary', `${count('skipped')} request${count('skipped') > 1 ? 's were' : ' was'} skipped (all assertions skipped).`]);
++    el.innerHTML = n.map(([c, m]) => `<div class="alert alert-${c} py-2 small mb-2">${m}</div>`).join('');
++}
+ 
+ // Overall run status, computed from the real assertion counts of the loaded run.
+ // Both cut-offs are user-adjustable (saved in this browser), so the verdict follows
+@@ -285,18 +445,18 @@ function extractPostmanResults(data) {
+     return results.map((result, idx) => {
+         const assertionsRaw = result.assertions || result.tests || {};
+         const assertions = Array.isArray(assertionsRaw)
+-            ? assertionsRaw.map(a => ({
+-                name: a.assertion || a.name || 'Unnamed assertion',
+-                status: a.error ? 'failed' : 'passed'
+-            }))
++            ? assertionsRaw.map(mapAssertion)
+             : Object.entries(assertionsRaw).map(([key, value]) => ({
+                 name: key,
+-                status: value ? 'passed' : 'failed'
++                status: value ? 'passed' : 'failed',
++                errorMessage: null
+             }));
+ 
+         const request = result.request || {};
+         const response = result.response || {};
+         const method = (request.method || result.method || 'ENDPOINT').toString().trim().toUpperCase();
++        const requestHeaders = headerList(request.header || request.headers);
++        const responseHeaders = headerList(response.header || response.headers);
+ 
+         return {
+             _id: idx,
+@@ -308,31 +468,45 @@ function extractPostmanResults(data) {
+             responseStatus: response.status ?? result.responseCode?.name ?? '',
+             assertions: assertions,
+             requestBody: extractRequestBody(request),
+-            responseBody: decodeResponseBody(response, result)
++            responseBody: decodeResponseBody(response, result),
++            requestHeaders,
++            responseHeaders,
++            contentType: headerValue(responseHeaders, 'content-type'),
++            folder: '',
++            iteration: 1,
++            requestError: result.requestError || null,
++            scriptErrors: []
+         };
+     });
+ }
+ 
+ function extractNewmanResults(data) {
+     const executions = data.run?.executions || [];
++    const folders = buildFolderMap(data.collection?.item);
++    // Newman lists failures (assertion, script and request errors) separately, keyed by item.
++    const failuresById = {};
++    (data.run?.failures || []).forEach(f => {
++        const key = f.source?.id || f.cursor?.ref;
++        if (key) (failuresById[key] = failuresById[key] || []).push(f);
++    });
+     return executions.map((execution, idx) => {
+-        // Newman lists every assertion with an `error` key only present on
+-        // failures - unlike the Postman App export, it never gives clean
+-        // expected/actual values, only the assertion's error message.
+-        const assertionsRaw = execution.assertions || [];
+-        const assertions = assertionsRaw.map(a => ({
+-            name: a.assertion || 'Unnamed assertion',
+-            status: a.error ? 'failed' : 'passed',
+-            errorMessage: a.error?.message || null
+-        }));
+-
++        const assertions = (execution.assertions || []).map(mapAssertion);
+         const request = execution.request || {};
+         const response = execution.response || {};
+         // The request/item name lives under execution.item.name in Newman's
+-        // JSON reporter, not execution.name - that mismatch is what produced
+-        // "Unnamed Request" for every row on a Newman upload.
++        // JSON reporter, not execution.name.
+         const name = execution.item?.name || request.name || 'Unnamed Request';
+         const method = (request.method || 'ENDPOINT').toString().trim().toUpperCase();
++        const requestHeaders = headerList(request.header);
++        const responseHeaders = headerList(response.header);
++
++        // A request that never got a response (connection refused, DNS, timeout)
++        // or a script that threw is a failure even though it has no assertions.
++        const fl = failuresById[execution.item?.id] || [];
++        const hasResponse = execution.response && (execution.response.code !== undefined);
++        const requestError = execution.requestError
++            || (!hasResponse && fl.length ? { message: fl[0].error?.message, code: fl[0].error?.code } : null);
++        const scriptErrors = hasResponse ? fl.filter(f => f.error && !f.error.test).map(f => f.error.message || f.error.name) : [];
+ 
+         return {
+             _id: idx,
+@@ -344,7 +518,14 @@ function extractNewmanResults(data) {
+             responseStatus: response.status ?? '',
+             assertions,
+             requestBody: extractRequestBody(request),
+-            responseBody: decodeResponseBody(response, null)
++            responseBody: decodeResponseBody(response, null),
++            requestHeaders,
++            responseHeaders,
++            contentType: headerValue(responseHeaders, 'content-type'),
++            folder: folders[execution.item?.id] || '',
++            iteration: (execution.cursor?.iteration ?? 0) + 1,
++            requestError,
++            scriptErrors
+         };
+     });
+ }
+@@ -355,6 +536,7 @@ function extractRunMeta(data, format) {
+             collectionName: data.collection?.info?.name || 'Untitled Collection',
+             environmentName: data.environment?.name || null,
+             runDate: data.run?.timings?.started ? new Date(data.run.timings.started).toLocaleString() : null,
++            wallMs: (data.run?.timings?.completed && data.run?.timings?.started) ? data.run.timings.completed - data.run.timings.started : 0,
+             formatLabel: 'Newman CLI'
+         };
+     }
+@@ -373,7 +555,7 @@ function renderReport(data) {
+     const format = detectReportFormat(data);
+ 
+     if (format === 'unknown') {
+-        alert('Could not find test results in the provided JSON. Please provide a valid Postman Collection Runner export or a Newman JSON reporter output.');
++        alert('Could not find test results in this JSON. Supported: a Postman Collection Runner export or a Newman JSON reporter file. For the Postman CLI, run it with --reporter-json-structure newman.');
+         return;
+     }
+ 
+@@ -384,6 +566,9 @@ function renderReport(data) {
+         return;
+     }
+ 
++    allTests.forEach(t => { t.status = requestStatus(t); });
++    window.maxIteration = allTests.reduce((m, t) => Math.max(m, t.iteration || 1), 1);
++
+     // Make every test look-up-able by a stable id regardless of which tab
+     // (all/passed/failed) it's rendered under - the detail modal reads
+     // from this map.
+@@ -391,6 +576,7 @@ function renderReport(data) {
+     allTests.forEach(t => { window.testsById[t._id] = t; });
+ 
+     const meta = extractRunMeta(data, format);
++    window.runMeta = meta;
+     document.getElementById('reportTitle').textContent = meta.collectionName;
+ 
+     const metaBar = document.getElementById('runMetaBar');
+@@ -408,37 +594,41 @@ function renderReport(data) {
+     }
+ 
+     // Filter tests
+-    passedTests = allTests.filter(t => !t.assertions.some(a => a.status === 'failed'));
+-    failedTests = allTests.filter(t => t.assertions.some(a => a.status === 'failed'));
++    passedTests = allTests.filter(t => t.status === 'passed');
++    failedTests = allTests.filter(t => t.status === 'failed' || t.status === 'error');
+ 
+     // Calculate metrics
+     const totalTests = allTests.length;
+-    const totalAssertions = allTests.reduce((sum, test) => sum + test.assertions.length, 0);
+-    const failedAssertions = allTests.reduce((sum, test) => sum + test.assertions.filter(a => a.status === 'failed').length, 0);
+-    const passedAssertions = totalAssertions - failedAssertions;
++    const countA = s => allTests.reduce((n, t) => n + t.assertions.filter(a => a.status === s).length, 0);
++    const failedAssertions = countA('failed'), passedAssertions = countA('passed'), skippedAssertions = countA('skipped');
++    const totalAssertions = passedAssertions + failedAssertions;
++    const errorRequests = allTests.filter(t => t.status === 'error').length;
++    const timed = allTests.filter(t => t.responseCode !== 'N/A');
+     const totalTime = allTests.reduce((sum, r) => sum + r.time, 0);
+-    const avgTime = totalTests > 0 ? (totalTime / totalTests).toFixed(0) : 0;
++    const avgTime = timed.length > 0 ? (totalTime / timed.length).toFixed(0) : 0;
+     
+     // Calculate percentages
+     const passedPercentage = totalAssertions > 0 ? ((passedAssertions / totalAssertions) * 100).toFixed(1) : 0;
+     const failedPercentage = totalAssertions > 0 ? ((failedAssertions / totalAssertions) * 100).toFixed(1) : 0;
+     
+     // Calculate status
+-    lastCounts = { passed: passedAssertions, failed: failedAssertions };
++    lastCounts = { passed: passedAssertions, failed: failedAssertions + errorRequests };
+     updateOverallStatus();
+ 
+     // Find fastest and slowest tests
+-    const fastestTest = allTests.length > 0 ? 
+-        Math.min(...allTests.map(t => t.time)) : 0;
++    const fastestTest = timed.length > 0 ? 
++        Math.min(...timed.map(t => t.time)) : 0;
+     const slowestTest = allTests.length > 0 ? 
+         Math.max(...allTests.map(t => t.time)) : 0;
+ 
+     // Update UI
+     document.getElementById('totalTests').textContent = totalTests;
+-    document.getElementById('totalAssertions').textContent = totalAssertions;
++    document.getElementById('totalAssertions').innerHTML = skippedAssertions ? `${totalAssertions} <small>(+${skippedAssertions} skipped)</small>` : totalAssertions;
+     document.getElementById('passedTests').innerHTML = `${passedAssertions} <small>(${passedPercentage}%)</small>`;
+     document.getElementById('failedTests').innerHTML = `${failedAssertions} <small>(${failedPercentage}%)</small>`;
+-    document.getElementById('executionTime').textContent = `${(totalTime / 1000).toFixed(2)}s`;
++    const execMs = meta.wallMs > 0 ? meta.wallMs : totalTime;
++    document.getElementById('executionTime').textContent = `${(execMs / 1000).toFixed(2)}s`;
++    document.getElementById('executionTime').title = meta.wallMs > 0 ? 'Wall-clock time of the run' : 'Sum of response times';
+     document.getElementById('avgTime').textContent = `${avgTime}ms`;
+     document.getElementById('fastestTest').textContent = `${fastestTest}ms`;
+     document.getElementById('slowestTest').textContent = `${slowestTest}ms`;
+@@ -462,6 +652,7 @@ function renderReport(data) {
+     renderTests(allTests, 'testResultsAll');
+     renderTests(passedTests, 'testResultsPassed');
+     renderTests(failedTests, 'testResultsFailed');
++    renderNotices();
+ 
+     // Initialize charts
+     initCharts();
+@@ -471,12 +662,21 @@ function renderReport(data) {
+     jsonUploadArea.style.display = 'none';
+ }
+ 
++let reportCharts = [];
++function mkChart(el, config) {
++    const chart = new Chart(el.getContext('2d'), config);
++    reportCharts.push(chart);
++    return chart;
++}
++
+ function initCharts() {
++    reportCharts.forEach(c => { try { c.destroy(); } catch (e) {} });
++    reportCharts = [];
+     try {
+         // Response Time Chart
+         const responseTimeCtx = document.getElementById('responseTimeChart');
+         if (responseTimeCtx) {
+-            new Chart(responseTimeCtx.getContext('2d'), {
++            mkChart(responseTimeCtx, {
+                 type: 'line',
+                 data: {
+                     labels: allTests.map((_, i) => `Test ${i+1}`),
+@@ -541,7 +741,7 @@ function initCharts() {
+                 'rgba(255, 159, 64, 0.7)'
+             ];
+ 
+-            new Chart(statusCodeCtx.getContext('2d'), {
++            mkChart(statusCodeCtx, {
+                 type: 'bar',
+                 data: {
+                     labels: Object.keys(statusCodes),
+@@ -585,52 +785,58 @@ function initCharts() {
+     }
+ }
+ 
+-// Renders the report to a proper paginated PDF via html2canvas + jsPDF,
+-// instead of window.print() - the browser print engine was inconsistent
+-// about page breaks and cut charts/tables off mid-row across browsers.
+-async function exportReportToPDF() {
+-    const button = document.getElementById('exportPdfBtn');
+-    const originalHtml = button.innerHTML;
+-    button.disabled = true;
+-    button.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Generating PDF...';
+-
+-    try {
+-        const reportEl = document.getElementById('reportContainer');
+-        const canvas = await html2canvas(reportEl, {
+-            scale: 2,
+-            useCORS: true,
+-            backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff'
+-        });
+-
+-        const { jsPDF } = window.jspdf;
+-        const pdf = new jsPDF('p', 'pt', 'a4');
+-        const pageWidth = pdf.internal.pageSize.getWidth();
+-        const pageHeight = pdf.internal.pageSize.getHeight();
+-        const imgWidth = pageWidth;
+-        const imgHeight = (canvas.height * imgWidth) / canvas.width;
+-
+-        const imgData = canvas.toDataURL('image/png');
+-        let heightLeft = imgHeight;
+-        let position = 0;
+-
+-        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+-        heightLeft -= pageHeight;
+-
+-        while (heightLeft > 0) {
+-            position -= pageHeight;
+-            pdf.addPage();
+-            pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
+-            heightLeft -= pageHeight;
+-        }
+-
+-        pdf.save(`postman-report-${new Date().toISOString().slice(0, 10)}.pdf`);
+-    } catch (err) {
+-        console.error('PDF export failed:', err);
+-        alert('Could not generate the PDF. Please try again.');
+-    } finally {
+-        button.disabled = false;
+-        button.innerHTML = originalHtml;
++// Export PDF = the browser's print engine ("Save as PDF").
++// Unlike slicing one tall screenshot, this keeps real selectable text, breaks
++// pages between cards instead of through them, adapts to any paper size, and
++// has no canvas-size limit on long reports. Charts are swapped for sharp
++// images and the light theme is forced while printing (see prepareForPrint).
++let printState = null;
++function prepareForPrint() {
++    const container = document.getElementById('reportContainer');
++    if (printState || !container || container.style.display === 'none') return;
++    const root = document.documentElement;
++    printState = { theme: root.getAttribute('data-bs-theme') };
++    root.setAttribute('data-bs-theme', 'light');
++    root.classList.add('printing');
++    reportCharts.forEach(c => {
++        try {
++            c.resize(1000, 380);
++            const img = new Image();
++            img.className = 'print-img';
++            img.alt = '';
++            img.src = c.toBase64Image();
++            const box = c.canvas.parentNode;
++            box.appendChild(img);
++            box.classList.add('has-img');
++        } catch (e) { /* the live canvas is still printed */ }
++    });
++}
++function restoreAfterPrint() {
++    if (!printState) return;
++    const root = document.documentElement;
++    root.classList.remove('printing');
++    if (printState.theme) root.setAttribute('data-bs-theme', printState.theme); else root.removeAttribute('data-bs-theme');
++    document.querySelectorAll('.print-img').forEach(i => i.remove());
++    document.querySelectorAll('.has-img').forEach(b => b.classList.remove('has-img'));
++    reportCharts.forEach(c => { try { c.resize(); } catch (e) {} });
++    printState = null;
++}
++window.addEventListener('beforeprint', prepareForPrint);
++window.addEventListener('afterprint', restoreAfterPrint);
++
++function exportReportToPDF() {
++    const meta = window.runMeta || {};
++    const original = document.title;
++    // Browsers use the page title as the default PDF file name
++    document.title = ['Postman report', meta.collectionName, new Date().toISOString().slice(0, 10)].filter(Boolean).join(' - ');
++    window.addEventListener('afterprint', () => { document.title = original; }, { once: true });
++    const hint = document.getElementById('pdfHint');
++    if (hint) {
++        hint.classList.remove('d-none');
++        clearTimeout(window.__pdfHintTimer);
++        window.__pdfHintTimer = setTimeout(() => hint.classList.add('d-none'), 10000);
+     }
++    window.print();
+ }
+ 
+ // =============================================================
+@@ -826,9 +1032,7 @@ async function exportReportToHTML() {
+             document.createElement('script');
+ 
+         dataScript.textContent = `
+-window.testsById = ${JSON.stringify(
+-    window.testsById || {}
+-)};
++window.testsById = ${safeJson(prepareExportTests())};
+ `;
+ 
+ 
+@@ -854,6 +1058,26 @@ window.testsById = ${JSON.stringify(
+         }
+ 
+ 
++        // Keep the report self-contained: no selector bar, masked URLs, scripts inlined
++        docClone.querySelector('#rt-bar')?.remove();
++        docClone.querySelector('#exportOptions')?.remove();
++        if (document.getElementById('maskSecretsToggle')?.checked !== false) {
++            docClone.querySelectorAll('[id*="-url-"]').forEach(el => { el.textContent = maskUrl(el.textContent); });
++        }
++        for (const scriptEl of Array.from(docClone.querySelectorAll('script[src]'))) {
++            const src = scriptEl.getAttribute('src');
++            if (/report-types\.js$/.test(src)) { scriptEl.remove(); continue; }
++            try {
++                const res = await fetch(new URL(src, document.baseURI).href);
++                if (!res.ok) throw new Error('HTTP ' + res.status);
++                const code = (await res.text()).replace(/<\/script/gi, '<\\/script');
++                scriptEl.removeAttribute('src');
++                scriptEl.textContent = code;
++            } catch (error) {
++                console.warn('Could not inline script: ' + src, error);
++            }
++        }
++
+         // ---------------------------------------------------------
+         // 7. Mark report as exported
+         // ---------------------------------------------------------
+@@ -960,7 +1184,7 @@ window.testsById = ${JSON.stringify(
+ }
+ 
+ function handleFile(file) {
+-    if (!file || !file.type.includes('json')) {
++    if (!file || !(file.type.includes('json') || /\.json$/i.test(file.name || ''))) {
+         alert('Please upload a valid JSON file.');
+         return;
+     }
+@@ -978,19 +1202,19 @@ function handleFile(file) {
+ }
+ 
+ // Event Listeners
+-jsonUploadArea.addEventListener('click', () => fileInput.click());
+-fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
++jsonUploadArea?.addEventListener('click', () => fileInput.click());
++fileInput?.addEventListener('change', () => handleFile(fileInput.files[0]));
+ 
+-jsonUploadArea.addEventListener('dragover', (e) => {
++jsonUploadArea?.addEventListener('dragover', (e) => {
+     e.preventDefault();
+     jsonUploadArea.classList.add('dragover');
+ });
+ 
+-jsonUploadArea.addEventListener('dragleave', () => {
++jsonUploadArea?.addEventListener('dragleave', () => {
+     jsonUploadArea.classList.remove('dragover');
+ });
+ 
+-jsonUploadArea.addEventListener('drop', (e) => {
++jsonUploadArea?.addEventListener('drop', (e) => {
+     e.preventDefault();
+     jsonUploadArea.classList.remove('dragover');
+     if (e.dataTransfer.files.length) {
+@@ -998,7 +1222,7 @@ jsonUploadArea.addEventListener('drop', (e) => {
+     }
+ });
+ 
+-document.getElementById('pasteJsonBtn').addEventListener('click', () => {
++document.getElementById('pasteJsonBtn')?.addEventListener('click', () => {
+     const pastedData = prompt('Paste your Postman JSON report data here:');
+     if (pastedData) {
+         try {
+@@ -1011,7 +1235,7 @@ document.getElementById('pasteJsonBtn').addEventListener('click', () => {
+     }
+ });
+ 
+-viewFailedBtn.addEventListener('click', () => {
++viewFailedBtn?.addEventListener('click', () => {
+     const failedTab = new bootstrap.Tab(document.getElementById('failed-tab'));
+     failedTab.show();
+ });
+diff --git a/tests/fixtures.js b/tests/fixtures.js
+new file mode 100644
+index 0000000..4fbd291
+--- /dev/null
++++ b/tests/fixtures.js
+@@ -0,0 +1,46 @@
++// Deterministic JMeter CSV/JTL generators (seeded, so results are repeatable).
++const HEADER = 'timeStamp,elapsed,label,responseCode,responseMessage,threadName,dataType,success,failureMessage,bytes,sentBytes,grpThreads,allThreads,URL,Latency,IdleTime,Connect';
++
++function rng(seed) {
++  return () => { seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
++}
++const gauss = (r, mean, sd) => mean + sd * Math.sqrt(-2 * Math.log(1 - r())) * Math.cos(2 * Math.PI * r());
++
++// n samples, one every stepMs; fn(i, r) returns { el, ok, users }
++function build(n, stepMs, fn, seed = 1) {
++  const r = rng(seed), rows = [HEADER], t0 = 1700000000000;
++  for (let i = 0; i < n; i++) {
++    const x = fn(i, r), label = x.label || (i % 2 ? (x.odd || 'GET /cart') : 'POST /pay');
++    rows.push([t0 + i * stepMs, Math.max(5, Math.round(x.el)), label, x.ok ? 200 : 503, x.ok ? 'OK' : 'Service Unavailable', 'TG 1-1', 'text', x.ok ? 'true' : 'false', x.ok ? '' : 'boom', 1000, 200, x.users, x.users, 'http://x' + label.split(' ')[1], 50, 0, 10].join(','));
++  }
++  return rows.join('\n');
++}
++
++// Steady 50 users for 10 minutes
++const load = ({ err = 0.002, mean = 300, users = 50, odd } = {}) => build(6000, 100, (i, r) => ({ el: gauss(r, mean, 40), ok: r() > err, users, odd }));
++
++// Same as load, but only POST /pay changes: its mean response time is payMean (GET /cart stays at 300 ms)
++const loadPay = ({ payMean = 300 } = {}) => build(6000, 100, (i, r) => ({ el: gauss(r, i % 2 ? 300 : payMean, 40), ok: r() > 0.002, users: 50 }));
++
++// 10 users, a 2-minute surge to 100 users, then back to 10. recoverSec = 0 means latency never comes back down.
++const spike = ({ spikeErr = 0.08, spikeMean = 1400, recoverSec = 90 } = {}) => build(6000, 100, (i, r) => {
++  const s = i / 10;
++  if (s < 300) return { el: gauss(r, 250, 30), ok: r() > 0.002, users: 10 };
++  if (s < 420) return { el: gauss(r, spikeMean, 200), ok: r() > spikeErr, users: 100 };
++  const d = recoverSec ? Math.min(1, (s - 420) / recoverSec) : 0;
++  return { el: gauss(r, spikeMean - (spikeMean - 250) * d, 30 + 100 * (1 - d)), ok: r() > 0.002, users: 10 };
++});
++
++// 50 users for ~2h13m; response time grows by `drift` over the run
++const soak = ({ drift = 0.6, rows = 8000 } = {}) => build(rows, 1000, (i, r) => ({ el: gauss(r, 300 * (1 + drift * i / rows), 40), ok: r() > 0.002, users: 50 }));
++
++// Users ramp 1 -> 300. After sample 2500 a share `lateErr` of requests fail. slope = ms added per user.
++const stress = ({ lateErr = 0.45, slope = 6 } = {}) => build(6000, 100, (i, r) => {
++  const u = 1 + Math.floor(i / 20);
++  return { el: gauss(r, 300 + u * slope, 50), ok: r() > (i < 2500 ? 0.002 : lateErr), users: u };
++});
++
++// Uniform 100-1000 ms: the exact p95 is about 955 ms
++const uniform = () => build(5000, 100, (i, r) => ({ el: 100 + 900 * r(), ok: true, users: 20 }));
++
++module.exports = { HEADER, build, load, loadPay, spike, soak, stress, uniform };
+diff --git a/tests/helpers.js b/tests/helpers.js
+new file mode 100644
+index 0000000..ab14b56
+--- /dev/null
++++ b/tests/helpers.js
+@@ -0,0 +1,51 @@
++// Loads the real jmeter.html in jsdom, feeds it CSV text, and exposes what the page rendered.
++const { JSDOM } = require('jsdom');
++const fs = require('fs'), path = require('path'), vm = require('vm');
++const Papa = require('papaparse');
++
++const HTML = process.env.JMETER_HTML || path.join(__dirname, '..', 'jmeter.html');
++
++async function run(csv, { type = 'auto', fileName = 'run.jtl' } = {}) {
++  const html = fs.readFileSync(HTML, 'utf8');
++  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1];
++  const dom = new JSDOM(html.replace(/<script[\s\S]*?<\/script>/g, ''), { runScripts: 'outside-only', pretendToBeVisual: true });
++  const w = dom.window, d = w.document;
++  w.Papa = { parse: (file, cfg) => Papa.parse(file.__text !== undefined ? file.__text : csv, { ...cfg, worker: false }) };
++  w.Chart = function (el) { this.canvas = el; this.destroy = () => {}; this.resize = () => {}; this.toBase64Image = () => 'data:image/png;base64,AAAA'; };
++  w.URL.createObjectURL = () => 'blob:test';
++  const ctx = dom.getInternalVMContext();
++  vm.runInContext(script, ctx);
++  d.getElementById('type').value = type;
++  w.__file = new w.File([csv], fileName); w.__file.__text = csv;
++  vm.runInContext('parse(window.__file)', ctx);
++  for (let i = 0; i < 200; i++) {                     // wait until a report or an error appears
++    if (!d.getElementById('out').hidden || !d.getElementById('msg').classList.contains('d-none')) break;
++    await new Promise(res => setTimeout(res, 25));
++  }
++  const q = s => d.querySelector(s);
++  const page = {
++    d, w,
++    get R() { return vm.runInContext('R', ctx); },
++    rendered: () => !d.getElementById('out').hidden,
++    error: () => d.getElementById('msg').classList.contains('d-none') ? '' : d.getElementById('msg').textContent,
++    status: () => ['pass', 'warn', 'fail'].find(s => q('#out .overall-status').classList.contains(s)),
++    typeLabel: () => d.getElementById('metaType').textContent,
++    note: () => (q('#out .overall-status .text-muted.small') || {}).textContent || '',
++    rules: () => [...d.querySelectorAll('#out .chip-row .badge')].map(el => ({ text: el.textContent, status: ['pass', 'warn', 'fail'].find(s => el.classList.contains('pill-' + s)) })),
++    rule: name => page.rules().find(r => r.text.startsWith(name)),
++    card: title => [...d.querySelectorAll('#out .summary-card')].find(c => c.textContent.includes(title)),
++    set: (id, value) => { const el = d.getElementById(id); el.value = value; el.dispatchEvent(new w.Event('input', { bubbles: true })); },
++    hasBaseline: () => vm.runInContext('!!BASE', ctx),
++    async addBaseline(text, name = 'baseline.jtl') {
++      const f = new w.File([text], name); f.__text = text; w.__base = f;
++      vm.runInContext('loadBaseline(window.__base)', ctx);
++      for (let i = 0; i < 200; i++) { if (page.hasBaseline() || page.error()) break; await new Promise(res => setTimeout(res, 25)); }
++      return page;
++    },
++    clearBaseline: () => vm.runInContext('clearBaseline()', ctx),
++    cmp: (tol = 10) => vm.runInContext('compareRuns(R, BASE, ' + tol + ')', ctx),
++    standalone: () => vm.runInContext('buildStandaloneHtml()', ctx),
++  };
++  return page;
++}
++module.exports = { run };
+diff --git a/tests/jmeter.test.js b/tests/jmeter.test.js
+new file mode 100644
+index 0000000..dec2ba1
+--- /dev/null
++++ b/tests/jmeter.test.js
+@@ -0,0 +1,212 @@
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const { run } = require('./helpers');
++const fx = require('./fixtures');
++
++// ---------- load / performance ----------
++test('load: a clean run passes', async () => {
++  const p = await run(fx.load(), { type: 'load' });
++  assert.equal(p.status(), 'pass');
++});
++test('load: 3% errors is a warning (1% pass, 5% warn)', async () => {
++  const p = await run(fx.load({ err: 0.03 }), { type: 'load' });
++  assert.equal(p.rule('Error rate').status, 'warn');
++  assert.equal(p.status(), 'warn');
++});
++test('load: 10% errors fails', async () => {
++  const p = await run(fx.load({ err: 0.10 }), { type: 'load' });
++  assert.equal(p.status(), 'fail');
++});
++test('load: slow responses warn on p95 but not p99', async () => {
++  const p = await run(fx.load({ mean: 1000 }), { type: 'load' });
++  assert.equal(p.rule('p95').status, 'warn');
++  assert.equal(p.rule('p99').status, 'pass');
++});
++test('load: editing a threshold re-grades the report', async () => {
++  const p = await run(fx.load(), { type: 'load' });
++  assert.equal(p.status(), 'pass');
++  p.set('tP95', '100');
++  assert.equal(p.rule('p95').status, 'fail');
++  assert.equal(p.status(), 'fail');
++});
++
++// ---------- spike ----------
++test('spike: auto-detected', async () => {
++  assert.match((await run(fx.spike())).typeLabel(), /spike.*auto-detected/);
++});
++test('spike: a healthy surge that recovers passes, and recovery is measured', async () => {
++  const p = await run(fx.spike({ spikeErr: 0.005, spikeMean: 900, recoverSec: 60 }), { type: 'spike' });
++  const rec = p.rule('Recovery');
++  assert.equal(rec.status, 'pass');
++  assert.doesNotMatch(rec.text, /Not recovered|No data/);
++  assert.equal(p.status(), 'pass');
++});
++test('spike: errors during the surge are not hidden by a calm run', async () => {
++  // whole-run error rate is under 2%, but 8% of requests fail during the surge
++  const p = await run(fx.spike({ spikeErr: 0.08 }), { type: 'spike' });
++  assert.equal(p.rule('Error rate (during spike)').status, 'fail');
++  assert.equal(p.status(), 'fail');
++});
++test('spike: latency that never returns to baseline fails recovery', async () => {
++  const p = await run(fx.spike({ spikeErr: 0.005, recoverSec: 0 }), { type: 'spike' });
++  assert.match(p.rule('Recovery').text, /Not recovered/);
++  assert.equal(p.rule('Recovery').status, 'fail');
++});
++test('spike: recovery uses a real baseline, not 0 ms', async () => {
++  const p = await run(fx.spike({ spikeErr: 0.005, spikeMean: 900, recoverSec: 60 }), { type: 'spike' });
++  const base = Number((p.note().match(/~(\d+) ms/) || [])[1]);
++  assert.ok(base > 150 && base < 500, 'baseline p95 was ' + base);
++});
++
++// ---------- soak ----------
++test('soak: runs over two hours are auto-detected', async () => {
++  assert.match((await run(fx.soak())).typeLabel(), /soak.*auto-detected/);
++});
++test('soak: latency that keeps growing fails on drift', async () => {
++  const p = await run(fx.soak({ drift: 0.6 }), { type: 'soak' });
++  const drift = Number((p.rule('Latency drift').text.match(/\+([\d.]+)%/) || [])[1]);
++  assert.ok(drift > 30, 'drift was ' + drift);
++  assert.equal(p.rule('Latency drift').status, 'fail');
++  assert.equal(p.status(), 'fail');
++});
++test('soak: flat latency passes', async () => {
++  const p = await run(fx.soak({ drift: 0 }), { type: 'soak' });
++  assert.equal(p.rule('Latency drift').status, 'pass');
++  assert.equal(p.status(), 'pass');
++});
++
++// ---------- stress ----------
++test('stress: auto-detected', async () => {
++  assert.match((await run(fx.stress())).typeLabel(), /stress.*auto-detected/);
++});
++test('stress: ~26% errors is a warning and the breaking point is reported', async () => {
++  const p = await run(fx.stress({ lateErr: 0.45 }), { type: 'stress' });
++  assert.equal(p.rule('Error rate (whole run)').status, 'warn');
++  assert.match(p.rule('Breaking point').text, /~\d+ users/);
++  assert.equal(p.status(), 'warn');
++});
++test('stress: more than 40% errors fails', async () => {
++  const p = await run(fx.stress({ lateErr: 0.9 }), { type: 'stress' });
++  assert.equal(p.status(), 'fail');
++});
++test('stress: a system that copes reports no breaking point and passes', async () => {
++  const p = await run(fx.stress({ lateErr: 0, slope: 2 }), { type: 'stress' });
++  assert.match(p.rule('Breaking point').text, /Not reached/);
++  assert.equal(p.status(), 'pass');
++});
++
++// ---------- parsing and numbers ----------
++test('rejects a file without a JMeter header row', async () => {
++  const p = await run('hello,world\n1,2\n');
++  assert.equal(p.rendered(), false);
++  assert.match(p.error(), /JMeter CSV/);
++});
++test('p95 is within 2% of the exact value', async () => {
++  const p = await run(fx.uniform(), { type: 'load' });
++  assert.ok(Math.abs(p.R.tot.p95 - 955) < 955 * 0.02, 'p95 was ' + p.R.tot.p95);
++});
++test('a 30-hour file keeps the timeline bounded and still renders', async () => {
++  const p = await run(fx.soak({ drift: 0.5, rows: 108000 }));
++  assert.ok(p.R.tl.length <= 100, 'timeline had ' + p.R.tl.length + ' points');
++  assert.match(p.typeLabel(), /soak/);
++});
++
++// ---------- what failed ----------
++test('What Failed names the endpoint and the error', async () => {
++  const p = await run(fx.load({ err: 0.05 }), { type: 'load' });
++  const text = p.card('What Failed').textContent;
++  assert.match(text, /POST \/pay/);
++  assert.match(text, /503 · Service Unavailable/);
++});
++
++// ---------- standalone HTML export ----------
++test('HTML export is a self-contained page with the verdict and chart images', async () => {
++  const p = await run(fx.load({ err: 0.10 }), { type: 'load', fileName: 'a<b>.jtl' });
++  const html = p.standalone();
++  assert.match(html, /^<!DOCTYPE html>/);
++  assert.match(html, /FAILED/);
++  assert.match(html, /data:image\/png/);
++  assert.doesNotMatch(html, /<canvas|<script/);
++  assert.match(html, /a&lt;b&gt;\.jtl/);
++  assert.doesNotMatch(html, /a<b>/);
++});
++
++// ---------- baseline comparison ----------
++const row = (cmp, name) => cmp.rows.find(r => r.name === name);
++
++test('baseline: an identical run shows no change', async () => {
++  const p = await (await run(fx.load(), { type: 'load' })).addBaseline(fx.load());
++  const c = p.cmp();
++  assert.ok(c.rows.every(r => r.status === 'same'));
++  assert.equal(p.rule('p95 vs baseline').status, 'pass');
++  assert.equal(p.rule('Error rate vs baseline').status, 'pass');
++  assert.ok(p.card('Compared with baseline'));
++});
++test('baseline: a regression fails even when the absolute limits still pass', async () => {
++  const p = await (await run(fx.load({ mean: 420 }), { type: 'load' })).addBaseline(fx.load());
++  assert.equal(p.rule('p95').status, 'pass');                    // 486 ms is under the 800 ms limit
++  assert.equal(p.rule('p95 vs baseline').status, 'fail');        // but it is >25% slower than the baseline
++  assert.equal(p.status(), 'fail');
++});
++test('baseline: a moderate slowdown warns', async () => {
++  const p = await (await run(fx.load({ mean: 360 }), { type: 'load' })).addBaseline(fx.load());
++  assert.equal(p.rule('p95 vs baseline').status, 'warn');
++  assert.equal(p.status(), 'warn');
++});
++test('baseline: a faster run is reported as better', async () => {
++  const p = await (await run(fx.load({ mean: 240 }), { type: 'load' })).addBaseline(fx.load());
++  const c = p.cmp();
++  assert.equal(c.metrics.find(m => m.key === 'p95').v, 'better');
++  assert.ok(c.rows.every(r => r.status === 'better'));
++  assert.equal(p.status(), 'pass');
++});
++test('baseline: more errors are flagged', async () => {
++  const p = await (await run(fx.load({ err: 0.02 }), { type: 'load' })).addBaseline(fx.load());
++  assert.equal(p.rule('Error rate vs baseline').status, 'warn');
++  const bad = await (await run(fx.load({ err: 0.08 }), { type: 'load' })).addBaseline(fx.load());
++  assert.equal(bad.rule('Error rate vs baseline').status, 'fail');
++});
++test('baseline: only the endpoint that got slower is marked as a regression', async () => {
++  const p = await (await run(fx.loadPay({ payMean: 500 }), { type: 'load' })).addBaseline(fx.loadPay());
++  const c = p.cmp();
++  assert.equal(row(c, 'POST /pay').status, 'worse');
++  assert.equal(row(c, 'GET /cart').status, 'same');
++  assert.equal(c.rows[0].name, 'POST /pay');                      // regressions are listed first
++});
++test('baseline: new and removed endpoints are detected, with a note', async () => {
++  const p = await (await run(fx.load({ odd: 'GET /orders' }), { type: 'load' })).addBaseline(fx.load());
++  const c = p.cmp();
++  assert.equal(row(c, 'GET /orders').status, 'new');
++  assert.equal(row(c, 'GET /cart').status, 'removed');
++  assert.match(c.notes.join(' '), /Only 1 of 2 endpoints/);
++});
++test('baseline: runs with very different load carry a warning', async () => {
++  const p = await (await run(fx.load({ users: 100 }), { type: 'load' })).addBaseline(fx.load({ users: 20 }));
++  assert.match(p.cmp().notes.join(' '), /Peak users differ/);
++  assert.equal(p.cmp().metrics.find(m => m.key === 'rps').v, 'info');
++});
++test('baseline: the tolerance setting changes the grading', async () => {
++  const p = await (await run(fx.load({ mean: 360 }), { type: 'load' })).addBaseline(fx.load());
++  assert.equal(p.rule('p95 vs baseline').status, 'warn');
++  p.set('tTol', '20');
++  assert.equal(p.rule('p95 vs baseline').status, 'pass');
++});
++test('baseline: clearing it removes the comparison and its rules', async () => {
++  const p = await (await run(fx.load(), { type: 'load' })).addBaseline(fx.load());
++  assert.ok(p.rule('p95 vs baseline'));
++  p.clearBaseline();
++  assert.equal(p.rule('p95 vs baseline'), undefined);
++  assert.equal(p.card('Compared with baseline'), undefined);
++});
++test('baseline: a bad baseline file shows an error and keeps the current report', async () => {
++  const p = await (await run(fx.load(), { type: 'load' })).addBaseline('hello,world\n1,2');
++  assert.match(p.error(), /Baseline: .*JMeter CSV/);
++  assert.equal(p.rendered(), true);
++  assert.equal(p.hasBaseline(), false);
++});
++test('baseline: the HTML export includes the comparison and its chart', async () => {
++  const p = await (await run(fx.load({ mean: 420 }), { type: 'load' })).addBaseline(fx.load(), 'last-release.jtl');
++  const html = p.standalone();
++  assert.match(html, /Compared with baseline: last-release\.jtl/);
++  assert.equal((html.match(/data:image\/png/g) || []).length, 3);
++});
+diff --git a/tests/package-lock.json b/tests/package-lock.json
+new file mode 100644
+index 0000000..20d4368
+--- /dev/null
++++ b/tests/package-lock.json
+@@ -0,0 +1,551 @@
++{
++  "name": "test-report-studio-tests",
++  "lockfileVersion": 3,
++  "requires": true,
++  "packages": {
++    "": {
++      "name": "test-report-studio-tests",
++      "devDependencies": {
++        "jsdom": "^26.1.0",
++        "papaparse": "^5.4.1"
++      }
++    },
++    "node_modules/@asamuzakjp/css-color": {
++      "version": "3.2.0",
++      "resolved": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-3.2.0.tgz",
++      "integrity": "sha512-K1A6z8tS3XsmCMM86xoWdn7Fkdn9m6RSVtocUrJYIwZnFVkng/PvkEoWtOWmP+Scc6saYWHWZYbndEEXxl24jw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@csstools/css-calc": "^2.1.3",
++        "@csstools/css-color-parser": "^3.0.9",
++        "@csstools/css-parser-algorithms": "^3.0.4",
++        "@csstools/css-tokenizer": "^3.0.3",
++        "lru-cache": "^10.4.3"
++      }
++    },
++    "node_modules/@csstools/color-helpers": {
++      "version": "5.1.0",
++      "resolved": "https://registry.npmjs.org/@csstools/color-helpers/-/color-helpers-5.1.0.tgz",
++      "integrity": "sha512-S11EXWJyy0Mz5SYvRmY8nJYTFFd1LCNV+7cXyAgQtOOuzb4EsgfqDufL+9esx72/eLhsRdGZwaldu/h+E4t4BA==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/csstools"
++        },
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/csstools"
++        }
++      ],
++      "license": "MIT-0",
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/@csstools/css-calc": {
++      "version": "2.1.4",
++      "resolved": "https://registry.npmjs.org/@csstools/css-calc/-/css-calc-2.1.4.tgz",
++      "integrity": "sha512-3N8oaj+0juUw/1H3YwmDDJXCgTB1gKU6Hc/bB502u9zR0q2vd786XJH9QfrKIEgFlZmhZiq6epXl4rHqhzsIgQ==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/csstools"
++        },
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/csstools"
++        }
++      ],
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      },
++      "peerDependencies": {
++        "@csstools/css-parser-algorithms": "^3.0.5",
++        "@csstools/css-tokenizer": "^3.0.4"
++      }
++    },
++    "node_modules/@csstools/css-color-parser": {
++      "version": "3.1.0",
++      "resolved": "https://registry.npmjs.org/@csstools/css-color-parser/-/css-color-parser-3.1.0.tgz",
++      "integrity": "sha512-nbtKwh3a6xNVIp/VRuXV64yTKnb1IjTAEEh3irzS+HkKjAOYLTGNb9pmVNntZ8iVBHcWDA2Dof0QtPgFI1BaTA==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/csstools"
++        },
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/csstools"
++        }
++      ],
++      "license": "MIT",
++      "dependencies": {
++        "@csstools/color-helpers": "^5.1.0",
++        "@csstools/css-calc": "^2.1.4"
++      },
++      "engines": {
++        "node": ">=18"
++      },
++      "peerDependencies": {
++        "@csstools/css-parser-algorithms": "^3.0.5",
++        "@csstools/css-tokenizer": "^3.0.4"
++      }
++    },
++    "node_modules/@csstools/css-parser-algorithms": {
++      "version": "3.0.5",
++      "resolved": "https://registry.npmjs.org/@csstools/css-parser-algorithms/-/css-parser-algorithms-3.0.5.tgz",
++      "integrity": "sha512-DaDeUkXZKjdGhgYaHNJTV9pV7Y9B3b644jCLs9Upc3VeNGg6LWARAT6O+Q+/COo+2gg/bM5rhpMAtf70WqfBdQ==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/csstools"
++        },
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/csstools"
++        }
++      ],
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      },
++      "peerDependencies": {
++        "@csstools/css-tokenizer": "^3.0.4"
++      }
++    },
++    "node_modules/@csstools/css-tokenizer": {
++      "version": "3.0.4",
++      "resolved": "https://registry.npmjs.org/@csstools/css-tokenizer/-/css-tokenizer-3.0.4.tgz",
++      "integrity": "sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw==",
++      "dev": true,
++      "funding": [
++        {
++          "type": "github",
++          "url": "https://github.com/sponsors/csstools"
++        },
++        {
++          "type": "opencollective",
++          "url": "https://opencollective.com/csstools"
++        }
++      ],
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/agent-base": {
++      "version": "7.1.4",
++      "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
++      "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">= 14"
++      }
++    },
++    "node_modules/cssstyle": {
++      "version": "4.6.0",
++      "resolved": "https://registry.npmjs.org/cssstyle/-/cssstyle-4.6.0.tgz",
++      "integrity": "sha512-2z+rWdzbbSZv6/rhtvzvqeZQHrBaqgogqt85sqFNbabZOuFbCVFb8kPeEtZjiKkbrm395irpNKiYeFeLiQnFPg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "@asamuzakjp/css-color": "^3.2.0",
++        "rrweb-cssom": "^0.8.0"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/data-urls": {
++      "version": "5.0.0",
++      "resolved": "https://registry.npmjs.org/data-urls/-/data-urls-5.0.0.tgz",
++      "integrity": "sha512-ZYP5VBHshaDAiVZxjbRVcFJpc+4xGgT0bK3vzy1HLN8jTO975HEbuYzZJcHoQEY5K1a0z8YayJkyVETa08eNTg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "whatwg-mimetype": "^4.0.0",
++        "whatwg-url": "^14.0.0"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/debug": {
++      "version": "4.4.3",
++      "resolved": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
++      "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "ms": "^2.1.3"
++      },
++      "engines": {
++        "node": ">=6.0"
++      },
++      "peerDependenciesMeta": {
++        "supports-color": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/decimal.js": {
++      "version": "10.6.0",
++      "resolved": "https://registry.npmjs.org/decimal.js/-/decimal.js-10.6.0.tgz",
++      "integrity": "sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/entities": {
++      "version": "6.0.1",
++      "resolved": "https://registry.npmjs.org/entities/-/entities-6.0.1.tgz",
++      "integrity": "sha512-aN97NXWF6AWBTahfVOIrB/NShkzi5H7F9r1s9mD3cDj4Ko5f2qhhVoYMibXF7GlLveb/D2ioWay8lxI97Ven3g==",
++      "dev": true,
++      "license": "BSD-2-Clause",
++      "engines": {
++        "node": ">=0.12"
++      },
++      "funding": {
++        "url": "https://github.com/fb55/entities?sponsor=1"
++      }
++    },
++    "node_modules/html-encoding-sniffer": {
++      "version": "4.0.0",
++      "resolved": "https://registry.npmjs.org/html-encoding-sniffer/-/html-encoding-sniffer-4.0.0.tgz",
++      "integrity": "sha512-Y22oTqIU4uuPgEemfz7NDJz6OeKf12Lsu+QC+s3BVpda64lTiMYCyGwg5ki4vFxkMwQdeZDl2adZoqUgdFuTgQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "whatwg-encoding": "^3.1.1"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/http-proxy-agent": {
++      "version": "7.0.2",
++      "resolved": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz",
++      "integrity": "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "agent-base": "^7.1.0",
++        "debug": "^4.3.4"
++      },
++      "engines": {
++        "node": ">= 14"
++      }
++    },
++    "node_modules/https-proxy-agent": {
++      "version": "7.0.6",
++      "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
++      "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "agent-base": "^7.1.2",
++        "debug": "4"
++      },
++      "engines": {
++        "node": ">= 14"
++      }
++    },
++    "node_modules/iconv-lite": {
++      "version": "0.6.3",
++      "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz",
++      "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "safer-buffer": ">= 2.1.2 < 3.0.0"
++      },
++      "engines": {
++        "node": ">=0.10.0"
++      }
++    },
++    "node_modules/is-potential-custom-element-name": {
++      "version": "1.0.1",
++      "resolved": "https://registry.npmjs.org/is-potential-custom-element-name/-/is-potential-custom-element-name-1.0.1.tgz",
++      "integrity": "sha512-bCYeRA2rVibKZd+s2625gGnGF/t7DSqDs4dP7CrLA1m7jKWz6pps0LpYLJN8Q64HtmPKJ1hrN3nzPNKFEKOUiQ==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/jsdom": {
++      "version": "26.1.0",
++      "resolved": "https://registry.npmjs.org/jsdom/-/jsdom-26.1.0.tgz",
++      "integrity": "sha512-Cvc9WUhxSMEo4McES3P7oK3QaXldCfNWp7pl2NNeiIFlCoLr3kfq9kb1fxftiwk1FLV7CvpvDfonxtzUDeSOPg==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "cssstyle": "^4.2.1",
++        "data-urls": "^5.0.0",
++        "decimal.js": "^10.5.0",
++        "html-encoding-sniffer": "^4.0.0",
++        "http-proxy-agent": "^7.0.2",
++        "https-proxy-agent": "^7.0.6",
++        "is-potential-custom-element-name": "^1.0.1",
++        "nwsapi": "^2.2.16",
++        "parse5": "^7.2.1",
++        "rrweb-cssom": "^0.8.0",
++        "saxes": "^6.0.0",
++        "symbol-tree": "^3.2.4",
++        "tough-cookie": "^5.1.1",
++        "w3c-xmlserializer": "^5.0.0",
++        "webidl-conversions": "^7.0.0",
++        "whatwg-encoding": "^3.1.1",
++        "whatwg-mimetype": "^4.0.0",
++        "whatwg-url": "^14.1.1",
++        "ws": "^8.18.0",
++        "xml-name-validator": "^5.0.0"
++      },
++      "engines": {
++        "node": ">=18"
++      },
++      "peerDependencies": {
++        "canvas": "^3.0.0"
++      },
++      "peerDependenciesMeta": {
++        "canvas": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/lru-cache": {
++      "version": "10.4.3",
++      "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-10.4.3.tgz",
++      "integrity": "sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==",
++      "dev": true,
++      "license": "ISC"
++    },
++    "node_modules/ms": {
++      "version": "2.1.3",
++      "resolved": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
++      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/nwsapi": {
++      "version": "2.2.28",
++      "resolved": "https://registry.npmjs.org/nwsapi/-/nwsapi-2.2.28.tgz",
++      "integrity": "sha512-IlVB7OS7qrOsVYlpnFIkETjMwT9jwvmocJmmM+GZU/PAB3uGi9Ezd7vcWhWBUnSc0ya4ppmQITOyP1ez9gg8cg==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/papaparse": {
++      "version": "5.7.0",
++      "resolved": "https://registry.npmjs.org/papaparse/-/papaparse-5.7.0.tgz",
++      "integrity": "sha512-qBGxg/7Q3Kl9Wfhrz2Z74UnvnHTXLNG6jmKJFeBvP2+y4lV7So+7SR62+Zd47JvdrCkX+nDcnr0ObPzek/+6RA==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/parse5": {
++      "version": "7.3.0",
++      "resolved": "https://registry.npmjs.org/parse5/-/parse5-7.3.0.tgz",
++      "integrity": "sha512-IInvU7fabl34qmi9gY8XOVxhYyMyuH2xUNpb2q8/Y+7552KlejkRvqvD19nMoUW/uQGGbqNpA6Tufu5FL5BZgw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "entities": "^6.0.0"
++      },
++      "funding": {
++        "url": "https://github.com/inikulin/parse5?sponsor=1"
++      }
++    },
++    "node_modules/punycode": {
++      "version": "2.3.1",
++      "resolved": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
++      "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=6"
++      }
++    },
++    "node_modules/rrweb-cssom": {
++      "version": "0.8.0",
++      "resolved": "https://registry.npmjs.org/rrweb-cssom/-/rrweb-cssom-0.8.0.tgz",
++      "integrity": "sha512-guoltQEx+9aMf2gDZ0s62EcV8lsXR+0w8915TC3ITdn2YueuNjdAYh/levpU9nFaoChh9RUS5ZdQMrKfVEN9tw==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/safer-buffer": {
++      "version": "2.1.2",
++      "resolved": "https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz",
++      "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/saxes": {
++      "version": "6.0.0",
++      "resolved": "https://registry.npmjs.org/saxes/-/saxes-6.0.0.tgz",
++      "integrity": "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==",
++      "dev": true,
++      "license": "ISC",
++      "dependencies": {
++        "xmlchars": "^2.2.0"
++      },
++      "engines": {
++        "node": ">=v12.22.7"
++      }
++    },
++    "node_modules/symbol-tree": {
++      "version": "3.2.4",
++      "resolved": "https://registry.npmjs.org/symbol-tree/-/symbol-tree-3.2.4.tgz",
++      "integrity": "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/tldts": {
++      "version": "6.1.86",
++      "resolved": "https://registry.npmjs.org/tldts/-/tldts-6.1.86.tgz",
++      "integrity": "sha512-WMi/OQ2axVTf/ykqCQgXiIct+mSQDFdH2fkwhPwgEwvJ1kSzZRiinb0zF2Xb8u4+OqPChmyI6MEu4EezNJz+FQ==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "tldts-core": "^6.1.86"
++      },
++      "bin": {
++        "tldts": "bin/cli.js"
++      }
++    },
++    "node_modules/tldts-core": {
++      "version": "6.1.86",
++      "resolved": "https://registry.npmjs.org/tldts-core/-/tldts-core-6.1.86.tgz",
++      "integrity": "sha512-Je6p7pkk+KMzMv2XXKmAE3McmolOQFdxkKw0R8EYNr7sELW46JqnNeTX8ybPiQgvg1ymCoF8LXs5fzFaZvJPTA==",
++      "dev": true,
++      "license": "MIT"
++    },
++    "node_modules/tough-cookie": {
++      "version": "5.1.2",
++      "resolved": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-5.1.2.tgz",
++      "integrity": "sha512-FVDYdxtnj0G6Qm/DhNPSb8Ju59ULcup3tuJxkFb5K8Bv2pUXILbf0xZWU8PX8Ov19OXljbUyveOFwRMwkXzO+A==",
++      "dev": true,
++      "license": "BSD-3-Clause",
++      "dependencies": {
++        "tldts": "^6.1.32"
++      },
++      "engines": {
++        "node": ">=16"
++      }
++    },
++    "node_modules/tr46": {
++      "version": "5.1.1",
++      "resolved": "https://registry.npmjs.org/tr46/-/tr46-5.1.1.tgz",
++      "integrity": "sha512-hdF5ZgjTqgAntKkklYw0R03MG2x/bSzTtkxmIRw/sTNV8YXsCJ1tfLAX23lhxhHJlEf3CRCOCGGWw3vI3GaSPw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "punycode": "^2.3.1"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/w3c-xmlserializer": {
++      "version": "5.0.0",
++      "resolved": "https://registry.npmjs.org/w3c-xmlserializer/-/w3c-xmlserializer-5.0.0.tgz",
++      "integrity": "sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "xml-name-validator": "^5.0.0"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/webidl-conversions": {
++      "version": "7.0.0",
++      "resolved": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-7.0.0.tgz",
++      "integrity": "sha512-VwddBukDzu71offAQR975unBIGqfKZpM+8ZX6ySk8nYhVoo5CYaZyzt3YBvYtRtO+aoGlqxPg/B87NGVZ/fu6g==",
++      "dev": true,
++      "license": "BSD-2-Clause",
++      "engines": {
++        "node": ">=12"
++      }
++    },
++    "node_modules/whatwg-encoding": {
++      "version": "3.1.1",
++      "resolved": "https://registry.npmjs.org/whatwg-encoding/-/whatwg-encoding-3.1.1.tgz",
++      "integrity": "sha512-6qN4hJdMwfYBtE3YBTTHhoeuUrDBPZmbQaxWAqSALV/MeEnR5z1xd8UKud2RAkFoPkmB+hli1TZSnyi84xz1vQ==",
++      "deprecated": "Use @exodus/bytes instead for a more spec-conformant and faster implementation",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "iconv-lite": "0.6.3"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/whatwg-mimetype": {
++      "version": "4.0.0",
++      "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-4.0.0.tgz",
++      "integrity": "sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/whatwg-url": {
++      "version": "14.2.0",
++      "resolved": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-14.2.0.tgz",
++      "integrity": "sha512-De72GdQZzNTUBBChsXueQUnPKDkg/5A5zp7pFDuQAj5UFoENpiACU0wlCvzpAGnTkj++ihpKwKyYewn/XNUbKw==",
++      "dev": true,
++      "license": "MIT",
++      "dependencies": {
++        "tr46": "^5.1.0",
++        "webidl-conversions": "^7.0.0"
++      },
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/ws": {
++      "version": "8.22.0",
++      "resolved": "https://registry.npmjs.org/ws/-/ws-8.22.0.tgz",
++      "integrity": "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==",
++      "dev": true,
++      "license": "MIT",
++      "engines": {
++        "node": ">=10.0.0"
++      },
++      "peerDependencies": {
++        "bufferutil": "^4.0.1",
++        "utf-8-validate": ">=5.0.2"
++      },
++      "peerDependenciesMeta": {
++        "bufferutil": {
++          "optional": true
++        },
++        "utf-8-validate": {
++          "optional": true
++        }
++      }
++    },
++    "node_modules/xml-name-validator": {
++      "version": "5.0.0",
++      "resolved": "https://registry.npmjs.org/xml-name-validator/-/xml-name-validator-5.0.0.tgz",
++      "integrity": "sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==",
++      "dev": true,
++      "license": "Apache-2.0",
++      "engines": {
++        "node": ">=18"
++      }
++    },
++    "node_modules/xmlchars": {
++      "version": "2.2.0",
++      "resolved": "https://registry.npmjs.org/xmlchars/-/xmlchars-2.2.0.tgz",
++      "integrity": "sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==",
++      "dev": true,
++      "license": "MIT"
++    }
++  }
++}
+diff --git a/tests/package.json b/tests/package.json
+new file mode 100644
+index 0000000..a3b4159
+--- /dev/null
++++ b/tests/package.json
+@@ -0,0 +1,7 @@
++{
++  "name": "test-report-studio-tests",
++  "private": true,
++  "description": "Automated checks for the JMeter report logic (runs the real page in jsdom)",
++  "scripts": { "test": "node --test" },
++  "devDependencies": { "jsdom": "^26.1.0", "papaparse": "^5.4.1" }
++}
+diff --git a/tests/postman-fixtures.js b/tests/postman-fixtures.js
+new file mode 100644
+index 0000000..e493774
+--- /dev/null
++++ b/tests/postman-fixtures.js
+@@ -0,0 +1,25 @@
++const buf = s => ({ type: 'Buffer', data: [...Buffer.from(s, 'utf8')] });
++const hdr = o => Object.entries(o).map(([key, value]) => ({ key, value }));
++const exec = (i, o) => ({ id: 'e' + i, cursor: { iteration: o.iteration || 0, position: i, ref: 'r' + i }, item: { id: 'r' + i, name: o.name }, request: { method: o.method || 'GET', url: { raw: o.url, host: ['api', 'example', 'com'], path: ['v1', 'x'] }, header: hdr(o.reqHeaders || { 'Content-Type': 'application/json', Authorization: 'Bearer SECRET-TOKEN-123' }), body: o.body }, response: o.noResponse ? undefined : { code: o.code, status: o.status, responseTime: o.ms, header: hdr(o.resHeaders || { 'Content-Type': 'application/json' }), stream: buf(o.res || '') }, assertions: o.assertions || [], requestError: o.requestError });
++exports.newman = {
++  collection: { info: { name: 'Shop API' }, item: [{ name: 'Orders', item: [{ id: 'r1', name: 'Create order' }] }, { id: 'r0', name: 'Get product' }] }, environment: { name: 'staging' },
++  run: {
++    timings: { started: 1700000000000, completed: 1700000009000 },
++    executions: [
++      exec(0, { name: 'Get product', url: 'https://api.example.com/v1/products/1', code: 200, status: 'OK', ms: 120, res: '{"id":1,"name":"Pen"}', assertions: [{ assertion: 'status is 200' }] }),
++      exec(1, { name: 'Create order', method: 'POST', url: 'https://api.example.com/v1/orders', code: 500, status: 'Internal Server Error', ms: 480, body: { mode: 'raw', raw: '{"sku":"A1","qty":2,"password":"hunter2"}' }, res: '{"error":"boom"}', assertions: [{ assertion: 'status is 201', error: { name: 'AssertionError', message: 'expected response to have status code 201 but got 500' } }, { assertion: 'has order id', error: { name: 'AssertionError', message: "expected undefined to be a number" } }] }),
++      exec(2, { name: 'Health check (server down)', url: 'https://api.example.com/health', noResponse: true, requestError: { code: 'ECONNREFUSED', message: 'connect ECONNREFUSED 10.0.0.1:443' }, assertions: [] }),
++      exec(3, { name: 'Skipped checks', url: 'https://api.example.com/v1/skip', code: 200, status: 'OK', ms: 90, res: '{}', assertions: [{ assertion: 'only runs in prod', skipped: true }] }),
++      exec(4, { name: 'No tests written', url: 'https://api.example.com/v1/notests', code: 404, status: 'Not Found', ms: 60, res: '{"detail":"nope"}', assertions: [] }),
++      exec(5, { name: 'HTML page', url: 'https://api.example.com/page', code: 200, status: 'OK', ms: 70, res: '<html><body>hi</script><script>alert(1)</script></body></html>', assertions: [{ assertion: 'is html' }] }),
++      exec(6, { name: 'Get product', iteration: 1, url: 'https://api.example.com/v1/products/2', code: 200, status: 'OK', ms: 130, res: '{"id":2}', assertions: [{ assertion: 'status is 200' }] }),
++    ],
++    failures: [{ error: { name: 'Error', message: 'connect ECONNREFUSED 10.0.0.1:443' }, source: { id: 'r2', name: 'Health check (server down)' }, cursor: { ref: 'r2' } }]
++  }
++};
++
++exports.postmanApp = { name: 'Legacy run', results: [
++  { name: 'Login', request: { method: 'POST', url: 'https://x.test/login', headers: 'Content-Type: application/json\nAuthorization: Bearer abc', rawModeData: '{"user":"a","password":"p"}' }, response: { code: 200, status: 'OK', responseTime: 50, body: '{"token":"t"}', headers: 'Content-Type: application/json' }, tests: { 'status ok': true } },
++  { name: 'Bad', request: { method: 'GET', url: 'https://x.test/b' }, response: { code: 500, status: 'Err', responseTime: 10, body: 'oops' }, tests: { ok: false } }
++] };
++exports.noBodies = { results: [{ name: 'a', request: { method: 'GET', url: 'https://x.test/a' }, response: { code: 200, status: 'OK', responseTime: 5 }, tests: { t: true } }] };
+diff --git a/tests/postman-helpers.js b/tests/postman-helpers.js
+new file mode 100644
+index 0000000..e570d83
+--- /dev/null
++++ b/tests/postman-helpers.js
+@@ -0,0 +1,50 @@
++// Loads the real postman.html + script/app.js in jsdom.
++const { JSDOM } = require('jsdom');
++const fs = require('fs'), path = require('path'), vm = require('vm');
++const ROOT = process.env.APP_ROOT || path.join(__dirname, '..');
++
++function load() {
++  const html = fs.readFileSync(path.join(ROOT, 'postman.html'), 'utf8');
++  const app = fs.readFileSync(path.join(ROOT, 'script', 'app.js'), 'utf8');
++  const dom = new JSDOM(html, { runScripts: 'outside-only', pretendToBeVisual: true, url: 'http://localhost/' });
++  const w = dom.window, d = w.document, alerts = [];
++  w.alert = m => alerts.push(m);
++  w.TextDecoder = TextDecoder; w.URL.revokeObjectURL = () => {};
++  w.matchMedia = () => ({ matches: false, addEventListener() {} });
++  w.HTMLCanvasElement.prototype.getContext = function () { return { canvas: this, createLinearGradient: () => ({ addColorStop() {} }) }; };
++  w.HTMLCanvasElement.prototype.toDataURL = () => 'data:image/png;base64,AAAA';
++  w.HTMLAnchorElement.prototype.click = () => {};
++  w.__destroyed = 0; w.__printed = 0;
++  w.Chart = function (ctx2d) { this.canvas = ctx2d.canvas; this.destroy = () => { w.__destroyed++; }; this.resize = () => {}; this.toBase64Image = () => 'data:image/png;base64,AAAA'; };
++  w.print = () => { w.__printed++; w.__titleWhilePrinting = d.title; };
++  w.bootstrap = { Modal: function () { this.show = () => {}; }, Tab: function () { this.show = () => {}; } };
++  const ctx = dom.getInternalVMContext();
++  vm.runInContext(app, ctx);
++  const ev = (code) => vm.runInContext(code, ctx);
++  const page = {
++    w, d, ctx, alerts, ev,
++    render: json => { w.__json = json; ev('renderReport(window.__json)'); return page; },
++    get tests() { return JSON.parse(JSON.stringify(ev('allTests'))); },
++    cards: tab => [...d.querySelectorAll('#' + tab + ' .test-card')],
++    card: name => [...d.querySelectorAll('#testResultsAll .test-card')].find(c => c.querySelector('.test-name').textContent === name),
++    badge: name => page.card(name).querySelector('.test-status').textContent,
++    overall: () => d.getElementById('overallStatusBadge').textContent,
++    text: id => d.getElementById(id).textContent,
++    notices: () => d.getElementById('runNotices').textContent,
++    open: id => ev('openTestDetail(' + id + ')'),
++    set: (id, v) => { d.getElementById(id).checked = v; },
++    async exportHtml() {
++      let blob = null;
++      w.URL.createObjectURL = b => { blob = b; return 'blob:x'; };
++      w.fetch = async url => {
++        const u = new URL(url);
++        if (u.hostname === 'localhost') { const f = path.join(ROOT, decodeURIComponent(u.pathname)); return { ok: fs.existsSync(f), status: 200, text: async () => fs.readFileSync(f, 'utf8') }; }
++        return { ok: true, status: 200, text: async () => '/* cdn */' };
++      };
++      w.__t = null; await ev('exportReportToHTML()');
++      return new Promise(res => { const r = new w.FileReader(); r.onload = () => res(r.result); r.readAsText(blob); });
++    },
++  };
++  return page;
++}
++module.exports = { load };
+diff --git a/tests/postman.test.js b/tests/postman.test.js
+new file mode 100644
+index 0000000..a12e0f9
+--- /dev/null
++++ b/tests/postman.test.js
+@@ -0,0 +1,202 @@
++const test = require('node:test');
++const assert = require('node:assert/strict');
++const { JSDOM } = require('jsdom');
++const vm = require('vm');
++const fs = require('fs'), path = require('path');
++const { load } = require('./postman-helpers');
++const fx = require('./postman-fixtures');
++
++// ---------- request status ----------
++test('a request that never completed is an ERROR, listed under Failed, and fails the run', () => {
++  const p = load().render(fx.newman);
++  assert.equal(p.badge('Health check (server down)'), 'ERROR');
++  assert.ok(p.cards('testResultsFailed').some(c => c.textContent.includes('Health check')));
++  assert.match(p.card('Health check (server down)').textContent, /connect ECONNREFUSED/);
++});
++test('a run whose only request failed to connect is never reported as PASS', () => {
++  const only = JSON.parse(JSON.stringify(fx.newman));
++  only.run.executions = [only.run.executions[2]];
++  const p = load().render(only);
++  assert.notEqual(p.overall(), 'PASS');
++  assert.notEqual(p.overall(), 'NO DATA');
++});
++test('requests without tests are NO TESTS and not counted as passed', () => {
++  const p = load().render(fx.newman);
++  assert.equal(p.badge('No tests written'), 'NO TESTS');
++  assert.ok(!p.cards('testResultsPassed').some(c => c.textContent.includes('No tests written')));
++  assert.match(p.notices(), /no tests/);
++});
++test('skipped assertions are SKIPPED, not passed', () => {
++  const p = load().render(fx.newman);
++  assert.equal(p.badge('Skipped checks'), 'SKIPPED');
++  assert.match(p.text('totalAssertions'), /skipped/);
++});
++test('failed assertion messages are shown on the card', () => {
++  const p = load().render(fx.newman);
++  assert.match(p.card('Create order').textContent, /expected response to have status code 201 but got 500/);
++});
++test('execution time is the wall-clock time of the run when known', () => {
++  assert.equal(load().render(fx.newman).text('executionTime'), '9.00s');
++});
++
++// ---------- capture ----------
++test('Newman bodies are decoded and request bodies captured', () => {
++  const t = load().render(fx.newman).tests;
++  assert.equal(t[0].responseBody, '{"id":1,"name":"Pen"}');
++  assert.match(t[1].requestBody, /"sku":"A1"/);
++  assert.equal(t[2].responseBody, '');
++});
++test('request and response headers are captured', () => {
++  const t = load().render(fx.newman).tests;
++  assert.deepEqual(t[0].requestHeaders.map(h => h.key), ['Content-Type', 'Authorization']);
++  assert.equal(t[0].contentType, 'application/json');
++});
++test('folder and iteration are captured and shown', () => {
++  const p = load().render(fx.newman);
++  assert.equal(p.tests[1].folder, 'Orders');
++  assert.equal(p.tests[6].iteration, 2);
++  assert.match(p.card('Create order').textContent, /Orders/);
++  assert.match(p.cards('testResultsAll')[6].textContent, /Iteration 2/);
++});
++test('the viewer shows headers, bodies, size and the request error', () => {
++  const p = load().render(fx.newman);
++  p.open(1);
++  assert.match(p.text('requestBodyContent'), /"sku": "A1"/);
++  assert.match(p.text('responseHeadersBody'), /Content-Type/);
++  assert.match(p.text('detailSummary'), /POST .*orders.*500/);
++  assert.match(p.text('responseBodyMeta'), /\d+ B/);
++  p.open(2);
++  assert.equal(p.d.getElementById('detailError').classList.contains('d-none'), false);
++  assert.match(p.text('detailError'), /ECONNREFUSED/);
++  assert.match(p.text('responseBodyContent'), /did not complete/);
++});
++test('huge bodies are shortened for display but kept whole for copy and download', () => {
++  const big = JSON.parse(JSON.stringify(fx.newman));
++  big.run.executions[0].response.stream = { type: 'Buffer', data: [...Buffer.from('x'.repeat(300000))] };
++  const p = load().render(big);
++  p.open(0);
++  assert.match(p.text('responseBodyContent'), /shortened for display/);
++  assert.ok(p.text('responseBodyContent').length < 210000);
++  assert.equal(p.ev('currentDetail.responseBody.length'), 300000);
++});
++test('Postman app exports: legacy raw body and text headers are captured', () => {
++  const t = load().render(fx.postmanApp).tests;
++  assert.match(t[0].requestBody, /"user":"a"/);
++  assert.deepEqual(t[0].requestHeaders.map(h => h.key), ['Content-Type', 'Authorization']);
++  assert.equal(t[0].responseBody, '{"token":"t"}');
++});
++test('a file with no bodies explains how to get them', () => {
++  const p = load().render(fx.noBodies);
++  assert.match(p.notices(), /no request or response bodies/);
++  assert.match(p.notices(), /--reporter-json-structure newman/);
++});
++
++// ---------- input handling ----------
++test('unsupported JSON gives guidance that mentions the Postman CLI option', () => {
++  const p = load(); p.render({ summary: {} });
++  assert.match(p.alerts[0], /reporter-json-structure newman/);
++});
++test('a .json file with an empty MIME type is accepted', async () => {
++  const p = load();
++  p.w.__f = new p.w.File([JSON.stringify(fx.newman)], 'run.json', { type: '' });
++  p.ev('handleFile(window.__f)');
++  for (let i = 0; i < 100 && !p.cards('testResultsAll').length; i++) await new Promise(r => setTimeout(r, 20));
++  assert.equal(p.cards('testResultsAll').length, 7);
++});
++
++// ---------- secrets and export safety ----------
++test('masking hides passwords, tokens and keys in JSON, text, URLs and headers', () => {
++  const p = load();
++  assert.doesNotMatch(p.ev('maskText(\'{"user":"a","password":"hunter2","nested":{"api_key":"k"}}\')'), /hunter2|"k"/);
++  assert.doesNotMatch(p.ev('maskText("token=abc123&x=1")'), /abc123/);
++  assert.doesNotMatch(p.ev('maskText("Authorization: Bearer abc.def")'), /abc\.def/);
++  assert.match(p.ev('maskUrl("https://x.test/a?api_key=SECRET&page=2")'), /api_key=\*+&page=2/);
++  assert.equal(p.ev('maskHeader({ key: "Cookie", value: "s=1" }).value'), '******');
++  assert.equal(p.ev('maskText(\'{"author":"Ann"}\')').includes('Ann'), true);
++});
++test('export data masks secrets by default and can drop bodies entirely', () => {
++  const p = load().render(fx.newman);
++  assert.doesNotMatch(JSON.stringify(p.ev('prepareExportTests()')), /hunter2|SECRET-TOKEN/);
++  p.set('includeBodiesToggle', false);
++  const t = p.ev('prepareExportTests()');
++  assert.equal(t[1].requestBody, ''); assert.equal(t[1].requestHeaders.length, 0);
++});
++test('safeJson cannot be broken out of by </script> in a body', () => {
++  const p = load();
++  const out = p.ev('safeJson({ b: "</script><script>alert(1)</script>" })');
++  assert.doesNotMatch(out, /</);
++  assert.equal(JSON.parse(out).b, '</script><script>alert(1)</script>');
++});
++test('HTML export is self-contained: scripts inlined, data intact, no injection', async () => {
++  const p = load().render(fx.newman);
++  const html = await p.exportHtml();
++  const doc = new JSDOM(html).window.document;                       // parse only, scripts are not run
++  const scripts = [...doc.querySelectorAll('script')];
++  assert.ok(scripts.every(s => !s.getAttribute('src') || /^https?:/.test(s.getAttribute('src')) === false), 'no external script left');
++  assert.ok(scripts.some(s => s.textContent.includes('function openTestDetail')), 'app.js is inlined');
++  assert.ok(!scripts.some(s => s.textContent.includes('alert(1)') && !s.textContent.includes('testsById')), 'no injected script');
++  const data = scripts.find(s => s.textContent.includes('window.testsById ='));
++  const sandbox = { window: {} }; vm.runInNewContext(data.textContent, sandbox);
++  assert.equal(Object.keys(sandbox.window.testsById).length, 7);
++  assert.match(sandbox.window.testsById[5].responseBody, /alert\(1\)/);        // body preserved as text
++  assert.doesNotMatch(html, /hunter2|SECRET-TOKEN-123/);                       // masked by default
++  assert.equal(doc.querySelector('#rt-bar'), null);
++  assert.equal(doc.querySelector('#jsonUploadArea'), null);
++});
++
++// ---------- PDF (print) ----------
++const fire = (p, name) => p.w.dispatchEvent(new p.w.Event(name));
++
++test('Export PDF opens the print flow with a useful file name and hint, then restores the title', () => {
++  const p = load().render(fx.newman);
++  const before = p.d.title;
++  p.ev('exportReportToPDF()');
++  assert.equal(p.w.__printed, 1);
++  assert.match(p.w.__titleWhilePrinting, /^Postman report - Shop API - \d{4}-\d{2}-\d{2}$/);
++  assert.equal(p.d.getElementById('pdfHint').classList.contains('d-none'), false);
++  fire(p, 'afterprint');
++  assert.equal(p.d.title, before);
++});
++test('charts are swapped for images while printing and restored afterwards', () => {
++  const p = load().render(fx.newman);
++  fire(p, 'beforeprint');
++  assert.equal(p.d.querySelectorAll('.print-img').length, 2);
++  assert.equal(p.d.querySelectorAll('.chart-container.has-img').length, 2);
++  fire(p, 'afterprint');
++  assert.equal(p.d.querySelectorAll('.print-img').length, 0);
++  assert.equal(p.d.querySelectorAll('.has-img').length, 0);
++});
++test('printing always uses the light theme, then returns to the chosen theme', () => {
++  const p = load().render(fx.newman);
++  p.d.documentElement.setAttribute('data-bs-theme', 'dark');
++  fire(p, 'beforeprint');
++  assert.equal(p.d.documentElement.getAttribute('data-bs-theme'), 'light');
++  assert.ok(p.d.documentElement.classList.contains('printing'));
++  fire(p, 'afterprint');
++  assert.equal(p.d.documentElement.getAttribute('data-bs-theme'), 'dark');
++  assert.ok(!p.d.documentElement.classList.contains('printing'));
++});
++test('printing before a report is loaded does nothing', () => {
++  const p = load();
++  fire(p, 'beforeprint');
++  assert.ok(!p.d.documentElement.classList.contains('printing'));
++});
++test('loading a second report replaces the charts instead of stacking them', () => {
++  const p = load().render(fx.newman).render(fx.postmanApp);
++  assert.equal(p.ev('reportCharts.length'), 2);
++  assert.equal(p.w.__destroyed, 2);
++});
++test('the screenshot-based PDF libraries are gone', () => {
++  const root = path.join(__dirname, '..');
++  const html = fs.readFileSync(path.join(root, 'postman.html'), 'utf8'), app = fs.readFileSync(path.join(root, 'script', 'app.js'), 'utf8');
++  assert.doesNotMatch(html + app, /html2canvas|jspdf/i);
++});
++test('print styles keep cards whole, hide controls and print only the active tab', () => {
++  const css = fs.readFileSync(path.join(__dirname, '..', 'css', 'styles.css'), 'utf8');
++  const print = css.slice(css.lastIndexOf('@media print'));
++  assert.match(print, /\.test-card[^{]*\{[^}]*break-inside: avoid/);
++  assert.match(print, /\.tab-content > \.tab-pane \{ display: none/);
++  assert.match(print, /\.tab-content > \.tab-pane\.active \{ display: block/);
++  assert.match(print, /\.chart-container\.has-img canvas \{ display: none/);
++  assert.match(print, /#rt-bar/);
++});

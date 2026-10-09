@@ -13,9 +13,13 @@ This project was born out of the need for better visibility and presentation of 
 
 - 🔄 **Postman JSON Parser**: Parses Postman collection runner's exported `.json` result files.
 - 🖥️ **Interactive HTML Report**: Automatically renders a styled, responsive dashboard with test suite summaries.
-- 📄 **PDF Export**: One-click PDF download functionality.
+- 📄 **PDF Export**: Opens the print dialog; choose **Save as PDF**. Real selectable text, any paper size, and pages break between cards (not through them). Charts print as sharp images and the light theme is used even in dark mode.
 - 🌐 **Mobile-Friendly**: Responsive layout for seamless use on all screen sizes.
 - 🎨 **Customizable Themes** *(Upcoming)*: Change color schemes and branding styles.
+- 🧾 **Request / Response viewer**: bodies and headers for every request, with copy, download and a size label; very large bodies are shortened on screen only.
+- 🔒 **Safe sharing**: the HTML export can mask passwords, tokens, API keys and cookies, can leave out bodies and headers, and works offline as a single file.
+- ⚠️ **Honest statuses**: requests that never completed show ERROR, requests without tests show NO TESTS, skipped assertions show SKIPPED, and failure messages appear on the card.
+- 🔍 **Baseline comparison**: compare a JMeter run with an older one to spot regressions per endpoint.
 - 🏠 **Home Page**: Choose between the Postman and JMeter reports.
 - ⚡ **JMeter CSV/JTL Reports**: Configurable load, stress, spike, soak and baseline/performance analysis with error-rate, p95, p99, throughput, recovery and latency-drift logic.
 - 📊 **Visual Breakdown**: Success/failure rate, error logs, and test durations visualized with charts.
@@ -28,8 +32,8 @@ The JMeter report uses the same test data/script as the source of truth, but eac
 | Test type | Primary purpose | Key verdict logic |
 |---|---|---|
 | Load | Validate expected peak traffic | Error rate, p95, p99 and optional throughput thresholds |
-| Stress | Find degradation/breaking point | Progressive load analysis; identifies the first degradation boundary rather than treating the boundary itself as a normal failure |
-| Spike | Validate sudden surge resilience | Error rate, p95, p99 and recovery to ≤120% of baseline |
+| Stress                 | Find degradation/breaking point   | Reports the breaking point (first interval with over 5% errors or p95 past the limit) and grades the whole-run error rate (default: pass ≤ 20%, warning ≤ 40%) |
+| Spike                  | Validate sudden surge resilience  | Error rate, p95 and p99 during the surge itself (users at 50% of peak or more) and recovery to ≤120% of the pre-spike baseline p95 |
 | Soak | Detect time-dependent degradation | Error rate, p95, p99 and latency drift between the first and last 10% of the run |
 | Performance / Baseline | Establish normal behaviour | Configurable error, p95, p99 and optional throughput thresholds |
 
@@ -43,7 +47,7 @@ A single baseline run is useful for establishing reference performance, but it s
 |------------------|---------------------|
 | Frontend         | HTML, CSS, JavaScript |
 | Charting         | Chart.js            |
-| PDF Export       | jsPDF, html2canvas  |
+| PDF Export       | Browser print engine (Save as PDF) |
 | File Handling    | FileReader API      |
 | Future Upgrade   | React.js (in roadmap) |
 
@@ -62,8 +66,8 @@ No installation needed if running the static version. You can simply open the `i
 1. Clone the repo:
 
    ```
-   git clone https://github.com/fidelanders/postman-html-reporter.git
-   cd postman-html-reporter
+   git clone https://github.com/fidelanders/Test-Report-Studio.git
+   cd Test-Report-Studio
    ```
 
 2. Open index.html in your browser:
@@ -88,10 +92,13 @@ You can host this tool on:
 ## 📂 File Structure
 
 ```
-postman-html-report/
+Test-Report-Studio/
 ├── index.html          # Home page (choose a report type)
 ├── postman.html        # Postman JSON report
 ├── jmeter.html         # JMeter CSV/JTL report
+├── sample-jmeter.jtl   # Sample JMeter results for trying the JMeter report
+├── CHANGES.md          # What changed from the original project
+├── tests/              # Automated tests for the JMeter logic
 ├── css/
 │   ├── styles.css      # Shared components
 │   ├── themeStyles.css # Light/dark theme
@@ -125,6 +132,10 @@ Example of exported PDF
 
 
 ## 🧪 How to Use
+
+**JMeter:** save your results as CSV/JTL with the default header row, open `jmeter.html` (or choose JMeter on the home page), pick the test type (or leave Auto-detect), adjust the thresholds if needed, then drop the file. Try it with `sample-jmeter.jtl`. To check for regressions, click **Compare with baseline** after the report appears and choose an older run: the report adds p95 and error-rate checks against it, a per-endpoint table (regression / improved / new / removed) and an overlay chart. The tolerance (default 10% on p95) is adjustable.
+
+**Postman:** to get request and response bodies in the report, run `newman run collection.json -r json --reporter-json-export out.json`. With the Postman CLI add `--reporter-json-structure newman` and do not use the `--reporter-json-omit...` options.
    ```
    Run your tests in Postman using the Collection Runner.
    Export the results as a JSON file.
@@ -162,8 +173,6 @@ MIT License © 2025 Fidelis Ogbeni
 🙌 Acknowledgements
 ```
 Postman
-jsPDF
-html2canvas
 Chart.js
 ```
 

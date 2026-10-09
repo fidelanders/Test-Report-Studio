@@ -481,3 +481,34 @@ header {
 .overall-status .status-danger{background:#e74c3c}.overall-status .status-critical{background:#8e1b10}.overall-status .status-muted{background:#7f8c8d}
 .overall-status-thresholds{display:flex;gap:14px;align-items:center;font-size:.85rem}
 .overall-status-thresholds input{width:64px;margin:0 4px;padding:2px 6px}
+
+/* Request states beyond pass / fail */
+.test-card.skipped, .test-card.notests { border-left-color: var(--muted); }
+.test-status.skipped, .test-status.notests { background-color: rgba(127, 140, 141, .18); color: var(--muted); }
+.assertion.skipped { background: rgba(127, 140, 141, .12); }
+.assertion-msg { margin-top: 4px; color: var(--fail-color); word-break: break-word; }
+.detail-headers td { border-bottom: 1px solid var(--border); font-size: .8rem; }
+
+/* PDF / print: pages break between cards, charts print as images, light theme */
+.print-img { display: none; }
+@media print {
+  @page { margin: 12mm; }
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  :root.printing { --bg: #fff; --card-bg: #fff; --text: #212529; --muted: #6c757d; --border: #dee2e6; }
+  html.printing body { background: #fff !important; color: #212529 !important; }
+  .container-fluid { padding: 0 !important; max-width: 100% !important; }
+  #rt-bar, #exportOptions, #pdfHint, .nav-tabs, .btn-toggle-visibility, .test-card .btn { display: none !important; }
+  .tab-content > .tab-pane { display: none !important; }
+  .tab-content > .tab-pane.active { display: block !important; opacity: 1 !important; }
+  .kpi-grid { grid-template-columns: repeat(4, 1fr) !important; gap: 8px !important; }
+  .kpi-tooltip { display: none !important; }
+  .kpi-card, .chart-card, .summary-card, .test-card, .overall-status, .alert { break-inside: avoid; page-break-inside: avoid; transform: none !important; }
+  #reportContainer .row > [class*="col-"] { flex: 0 0 100% !important; width: 100% !important; max-width: 100% !important; }
+  .chart-container { height: auto !important; min-height: 0 !important; }
+  .chart-container canvas { max-width: 100% !important; }
+  .chart-container.has-img canvas { display: none !important; }
+  .print-img { display: block; width: 100%; height: auto; }
+  .table-responsive { overflow: visible !important; }
+  thead { display: table-header-group; }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+}

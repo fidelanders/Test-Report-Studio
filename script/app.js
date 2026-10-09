@@ -8,7 +8,7 @@ const failurePanel = document.getElementById('failurePanel');
 const viewFailedBtn = document.getElementById('viewFailedBtn');
 
 // Initialize Bootstrap tabs
-const resultsTab = new bootstrap.Tab(document.getElementById('all-tab'));
+const resultsTab = (typeof bootstrap !== 'undefined' && document.getElementById('all-tab')) ? new bootstrap.Tab(document.getElementById('all-tab')) : null;
 
 // Pretty print JSON function
 
@@ -92,6 +92,8 @@ function decodeResponseBody(response, result) {
 // likely reason "Request" showed blank for requests that do have a body.
 function extractRequestBody(request) {
     const body = request?.body;
+    if (!body && typeof request?.rawModeData === 'string' && request.rawModeData) return request.rawModeData;
+    if (!body && typeof request?.data === 'string' && request.data) return request.data;
     if (!body) return '';
     if (typeof body === 'string') return body;
 
@@ -123,6 +125,49 @@ function detectReportFormat(data) {
     if (data && data.run && Array.isArray(data.run.executions)) return 'newman';
     if (data && Array.isArray(data.results)) return 'postman';
     return 'unknown';
+}
+
+// ---- Capture helpers -------------------------------------------------
+// Headers arrive as [{key,value}] (Newman / Postman), as a plain object, or as
+// a "Key: Value" text block in older exports.
+function headerList(h) {
+    if (!h) return [];
+    if (typeof h === 'string') {
+        return h.split(/\r?\n/).map(l => { const i = l.indexOf(':'); return i > 0 ? { key: l.slice(0, i).trim(), value: l.slice(i + 1).trim() } : null; }).filter(Boolean);
+    }
+    const arr = Array.isArray(h) ? h : (Array.isArray(h.members) ? h.members : Object.entries(h).map(([key, value]) => ({ key, value })));
+    return arr.filter(x => x && (x.key || x.name) && !x.disabled).map(x => ({ key: String(x.key || x.name), value: String(x.value ?? '') }));
+}
+function headerValue(list, name) {
+    const h = (list || []).find(x => x.key.toLowerCase() === name);
+    return h ? h.value : '';
+}
+// item id -> "Folder / Subfolder", from the collection tree Newman embeds in its report
+function buildFolderMap(items, trail = [], map = {}) {
+    (items || []).forEach(it => {
+        if (Array.isArray(it.item)) buildFolderMap(it.item, trail.concat(it.name || ''), map);
+        else if (it.id) map[it.id] = trail.join(' / ');
+    });
+    return map;
+}
+function mapAssertion(a) {
+    return {
+        name: a.assertion || a.name || 'Unnamed assertion',
+        status: a.skipped ? 'skipped' : (a.error ? 'failed' : 'passed'),
+        errorMessage: a.error ? ((typeof a.error === 'string' ? a.error : a.error.message) || null) : null
+    };
+}
+// One status per request. A request that never completed, or has no tests,
+// must not be reported as a pass.
+function requestStatus(t) {
+    if (t.requestError || (t.scriptErrors && t.scriptErrors.length)) return 'error';
+    if (t.assertions.some(a => a.status === 'failed')) return 'failed';
+    if (t.assertions.length === 0) return 'notests';
+    if (t.assertions.every(a => a.status === 'skipped')) return 'skipped';
+    return 'passed';
+}
+function formatBytes(n) {
+    return n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(1) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
 }
 
 function toggleVisibility(elementId, iconElement = null) {
@@ -157,9 +202,9 @@ function renderTests(filtered, containerId) {
     }
 
     resultsEl.innerHTML = filtered.map((item, index) => {
-        const hasFailed = item.assertions.some(a => a.status === 'failed');
-        const statusClass = hasFailed ? 'failed' : 'passed';
-        const statusText = hasFailed ? 'FAIL' : 'PASS';
+        const st = item.status || requestStatus(item);
+        const statusClass = { failed: 'failed', error: 'failed', passed: 'passed', skipped: 'skipped', notests: 'notests' }[st];
+        const statusText = { failed: 'FAIL', error: 'ERROR', passed: 'PASS', skipped: 'SKIPPED', notests: 'NO TESTS' }[st];
 
         return `
         <div class="test-card ${statusClass}">
@@ -176,10 +221,15 @@ function renderTests(filtered, containerId) {
                 </button>
             </div>
 
+            ${(item.folder || window.maxIteration > 1) ? `<div class="small text-muted mt-1">${item.folder ? '<i class="fas fa-folder me-1"></i>' + escapeHtml(item.folder) : ''}${window.maxIteration > 1 ? ` <span class="badge bg-secondary ms-2">Iteration ${item.iteration}</span>` : ''}</div>` : ''}
+
             <div class="small mt-1">
                 <strong>Response:</strong>
                 <span class="text-muted">${escapeHtml(safe(item.responseCode))} ${escapeHtml(safe(item.responseStatus, ''))} | Time: ${safe(item.time, 0)}ms</span>
             </div>
+
+            ${item.requestError ? `<div class="alert alert-danger py-2 small mt-2 mb-0"><strong>Request failed:</strong> ${escapeHtml(item.requestError.message || item.requestError.code || 'Unknown error')}</div>` : ''}
+            ${(item.scriptErrors || []).map(m => `<div class="alert alert-warning py-2 small mt-2 mb-0"><strong>Script error:</strong> ${escapeHtml(m)}</div>`).join('')}
 
             <div class="mt-3">
                 ${(item.assertions.length > 0) ? item.assertions.map(assertion => `
@@ -188,10 +238,11 @@ function renderTests(filtered, containerId) {
                         <span>${escapeHtml(safe(assertion.name, 'Unnamed assertion'))}</span>
                         <strong>${assertion.status.toUpperCase()}</strong>
                     </div>
+                    ${assertion.errorMessage ? `<div class="assertion-msg small">${escapeHtml(assertion.errorMessage)}</div>` : ''}
                 </div>`).join('') : '<div class="alert alert-secondary p-2">No assertions found for this request.</div>'}
             </div>
 
-            ${(item.requestBody || item.responseBody) ? `
+            ${(item.requestBody || item.responseBody || (item.requestHeaders || []).length || (item.responseHeaders || []).length || item.requestError) ? `
             <div class="mt-3">
                 <button class="btn btn-outline-primary btn-sm" onclick="openTestDetail(${item._id})">
                     <i class="fas fa-magnifying-glass me-1"></i>View Request / Response
@@ -208,18 +259,127 @@ function renderTests(filtered, containerId) {
 // click came from. Only shows the request/response bodies - status,
 // assertions, method, url, etc. are already visible on the card itself, so
 // repeating them here was pure duplication.
+const BODY_DISPLAY_LIMIT = 200000;
+let currentDetail = null;
+
+function renderHeaders(elId, list) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.innerHTML = (list && list.length)
+        ? list.map(h => `<tr><td class="text-muted text-nowrap pe-3">${escapeHtml(h.key)}</td><td class="text-break">${escapeHtml(h.value)}</td></tr>`).join('')
+        : '<tr><td class="text-muted">(no headers captured)</td></tr>';
+}
+function showBody(codeId, metaId, text, emptyMsg) {
+    const code = document.getElementById(codeId), meta = document.getElementById(metaId);
+    if (!text) { code.textContent = emptyMsg; if (meta) meta.textContent = ''; return; }
+    const shown = String(prettyPrintJson(text));
+    code.textContent = shown.length > BODY_DISPLAY_LIMIT
+        ? shown.slice(0, BODY_DISPLAY_LIMIT) + '\n... (shortened for display - Copy or Download gives the full body)'
+        : shown;
+    if (meta) meta.textContent = formatBytes(new Blob([text]).size);
+}
+
+// Looks up a rendered test by its stable _id (assigned once in renderReport)
+// so the detail modal works no matter which tab (all/passed/failed) the
+// click came from.
 function openTestDetail(id) {
     const test = window.testsById ? window.testsById[id] : null;
     if (!test) return;
+    currentDetail = test;
 
     document.getElementById('testDetailTitle').textContent = safe(test.name, 'Unnamed Request');
-
-    document.getElementById('requestBodyContent').textContent =
-        test.requestBody ? prettyPrintJson(test.requestBody) : '(no request body)';
-    document.getElementById('responseBodyContent').textContent =
-        test.responseBody ? prettyPrintJson(test.responseBody) : '(no response body)';
+    const sum = document.getElementById('detailSummary');
+    if (sum) sum.textContent = `${safe(test.method, '')} ${safe(test.url, '')}  |  ${safe(test.responseCode)} ${safe(test.responseStatus, '')}  |  ${safe(test.time, 0)} ms`;
+    const err = document.getElementById('detailError');
+    if (err) {
+        const msgs = [test.requestError ? 'Request failed: ' + (test.requestError.message || test.requestError.code || 'unknown error') : '']
+            .concat((test.scriptErrors || []).map(m => 'Script error: ' + m)).filter(Boolean);
+        err.textContent = msgs.join(' | ');
+        err.classList.toggle('d-none', msgs.length === 0);
+    }
+    renderHeaders('requestHeadersBody', test.requestHeaders);
+    renderHeaders('responseHeadersBody', test.responseHeaders);
+    showBody('requestBodyContent', 'requestBodyMeta', test.requestBody, '(no request body)');
+    showBody('responseBodyContent', 'responseBodyMeta', test.responseBody, test.requestError ? '(no response: the request did not complete)' : '(no response body)');
 
     new bootstrap.Modal(document.getElementById('testDetailModal')).show();
+}
+function copyBody(which) {
+    const text = currentDetail ? (currentDetail[which + 'Body'] || '') : '';
+    if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text); return; }
+    const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove();
+}
+function downloadBody(which) {
+    if (!currentDetail) return;
+    const text = currentDetail[which + 'Body'] || '';
+    const ct = headerValue(currentDetail[which + 'Headers'], 'content-type');
+    const ext = /json/i.test(ct) || /^\s*[\[{]/.test(text) ? 'json' : /xml/i.test(ct) ? 'xml' : /html/i.test(ct) ? 'html' : 'txt';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    a.download = `${(currentDetail.name || 'request').replace(/[^\w.-]+/g, '_')}-${which}.${ext}`;
+    document.body.appendChild(a); a.click(); a.remove();
+}
+
+// ---- Masking, used by the HTML export so shared reports do not leak secrets ----
+const SENS = 'pass(?:word|wd)?|secret|token|api[-_]?key|authorization|cookie|session|credential|private[-_]?key|signature';
+const SENSITIVE_KEY = new RegExp(SENS, 'i');
+const MASK = '******';
+function maskJson(v) {
+    if (Array.isArray(v)) return v.map(maskJson);
+    if (v && typeof v === 'object') {
+        const o = {};
+        for (const k of Object.keys(v)) o[k] = (SENSITIVE_KEY.test(k) && (v[k] === null || typeof v[k] !== 'object')) ? MASK : maskJson(v[k]);
+        return o;
+    }
+    return v;
+}
+function maskText(text) {
+    if (!text) return text;
+    try { return JSON.stringify(maskJson(JSON.parse(text)), null, 2); } catch (e) { /* not JSON - fall through to pattern masking */ }
+    return String(text)
+        .replace(new RegExp('("?[\\w.-]*(?:' + SENS + ')[\\w.-]*"?\\s*[:=]\\s*)((?:Bearer|Basic)\\s+)?("(?:[^"\\\\]|\\\\.)*"|[^\\s&,;]+)', 'gi'), (m, k) => k + MASK)
+        .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]+/g, '$1 ' + MASK);
+}
+function maskUrl(url) {
+    return String(url || '').replace(new RegExp('([?&][^=&#]*(?:' + SENS + ')[^=&#]*=)[^&#]*', 'gi'), '$1' + MASK);
+}
+function maskHeader(h) {
+    return SENSITIVE_KEY.test(h.key) ? { key: h.key, value: MASK } : { key: h.key, value: maskText(h.value) };
+}
+// JSON that is safe to place inside a <script> element (a response body that
+// contains "</script>" must not be able to end the element or inject markup).
+function safeJson(obj) {
+    return JSON.stringify(obj).replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+}
+function prepareExportTests() {
+    const mask = document.getElementById('maskSecretsToggle')?.checked !== false;
+    const bodies = document.getElementById('includeBodiesToggle')?.checked !== false;
+    const out = {};
+    for (const [id, t] of Object.entries(window.testsById || {})) {
+        const c = { ...t };
+        if (!bodies) { c.requestBody = ''; c.responseBody = ''; c.requestHeaders = []; c.responseHeaders = []; }
+        else if (mask) {
+            c.requestBody = maskText(t.requestBody); c.responseBody = maskText(t.responseBody);
+            c.requestHeaders = (t.requestHeaders || []).map(maskHeader); c.responseHeaders = (t.responseHeaders || []).map(maskHeader);
+        }
+        if (mask) c.url = maskUrl(t.url);
+        out[id] = c;
+    }
+    return out;
+}
+
+function renderNotices() {
+    const el = document.getElementById('runNotices');
+    if (!el) return;
+    const n = [];
+    const withBody = allTests.filter(t => t.requestBody || t.responseBody).length;
+    const withHeaders = allTests.filter(t => (t.requestHeaders || []).length || (t.responseHeaders || []).length).length;
+    if (!withBody) n.push(['warning', 'This file contains no request or response bodies' + (withHeaders ? '' : ' or headers') + ', so the request/response viewer has nothing to show. Newman\'s JSON reporter includes them by default (<code>newman run ... -r json --reporter-json-export out.json</code>). With the Postman CLI, add <code>--reporter-json-structure newman</code> and do not pass the <code>--reporter-json-omit...</code> options. Exports from the Postman app may not include bodies.']);
+    const count = k => allTests.filter(t => t.status === k).length;
+    if (count('error')) n.push(['danger', `${count('error')} request${count('error') > 1 ? 's' : ''} did not complete or hit a script error (for example connection refused). They are counted as failures.`]);
+    if (count('notests')) n.push(['secondary', `${count('notests')} request${count('notests') > 1 ? 's have' : ' has'} no tests, so ${count('notests') > 1 ? 'they are' : 'it is'} not counted as passed.`]);
+    if (count('skipped')) n.push(['secondary', `${count('skipped')} request${count('skipped') > 1 ? 's were' : ' was'} skipped (all assertions skipped).`]);
+    el.innerHTML = n.map(([c, m]) => `<div class="alert alert-${c} py-2 small mb-2">${m}</div>`).join('');
 }
 
 // Overall run status, computed from the real assertion counts of the loaded run.
@@ -285,18 +445,18 @@ function extractPostmanResults(data) {
     return results.map((result, idx) => {
         const assertionsRaw = result.assertions || result.tests || {};
         const assertions = Array.isArray(assertionsRaw)
-            ? assertionsRaw.map(a => ({
-                name: a.assertion || a.name || 'Unnamed assertion',
-                status: a.error ? 'failed' : 'passed'
-            }))
+            ? assertionsRaw.map(mapAssertion)
             : Object.entries(assertionsRaw).map(([key, value]) => ({
                 name: key,
-                status: value ? 'passed' : 'failed'
+                status: value ? 'passed' : 'failed',
+                errorMessage: null
             }));
 
         const request = result.request || {};
         const response = result.response || {};
         const method = (request.method || result.method || 'ENDPOINT').toString().trim().toUpperCase();
+        const requestHeaders = headerList(request.header || request.headers);
+        const responseHeaders = headerList(response.header || response.headers);
 
         return {
             _id: idx,
@@ -308,31 +468,45 @@ function extractPostmanResults(data) {
             responseStatus: response.status ?? result.responseCode?.name ?? '',
             assertions: assertions,
             requestBody: extractRequestBody(request),
-            responseBody: decodeResponseBody(response, result)
+            responseBody: decodeResponseBody(response, result),
+            requestHeaders,
+            responseHeaders,
+            contentType: headerValue(responseHeaders, 'content-type'),
+            folder: '',
+            iteration: 1,
+            requestError: result.requestError || null,
+            scriptErrors: []
         };
     });
 }
 
 function extractNewmanResults(data) {
     const executions = data.run?.executions || [];
+    const folders = buildFolderMap(data.collection?.item);
+    // Newman lists failures (assertion, script and request errors) separately, keyed by item.
+    const failuresById = {};
+    (data.run?.failures || []).forEach(f => {
+        const key = f.source?.id || f.cursor?.ref;
+        if (key) (failuresById[key] = failuresById[key] || []).push(f);
+    });
     return executions.map((execution, idx) => {
-        // Newman lists every assertion with an `error` key only present on
-        // failures - unlike the Postman App export, it never gives clean
-        // expected/actual values, only the assertion's error message.
-        const assertionsRaw = execution.assertions || [];
-        const assertions = assertionsRaw.map(a => ({
-            name: a.assertion || 'Unnamed assertion',
-            status: a.error ? 'failed' : 'passed',
-            errorMessage: a.error?.message || null
-        }));
-
+        const assertions = (execution.assertions || []).map(mapAssertion);
         const request = execution.request || {};
         const response = execution.response || {};
         // The request/item name lives under execution.item.name in Newman's
-        // JSON reporter, not execution.name - that mismatch is what produced
-        // "Unnamed Request" for every row on a Newman upload.
+        // JSON reporter, not execution.name.
         const name = execution.item?.name || request.name || 'Unnamed Request';
         const method = (request.method || 'ENDPOINT').toString().trim().toUpperCase();
+        const requestHeaders = headerList(request.header);
+        const responseHeaders = headerList(response.header);
+
+        // A request that never got a response (connection refused, DNS, timeout)
+        // or a script that threw is a failure even though it has no assertions.
+        const fl = failuresById[execution.item?.id] || [];
+        const hasResponse = execution.response && (execution.response.code !== undefined);
+        const requestError = execution.requestError
+            || (!hasResponse && fl.length ? { message: fl[0].error?.message, code: fl[0].error?.code } : null);
+        const scriptErrors = hasResponse ? fl.filter(f => f.error && !f.error.test).map(f => f.error.message || f.error.name) : [];
 
         return {
             _id: idx,
@@ -344,7 +518,14 @@ function extractNewmanResults(data) {
             responseStatus: response.status ?? '',
             assertions,
             requestBody: extractRequestBody(request),
-            responseBody: decodeResponseBody(response, null)
+            responseBody: decodeResponseBody(response, null),
+            requestHeaders,
+            responseHeaders,
+            contentType: headerValue(responseHeaders, 'content-type'),
+            folder: folders[execution.item?.id] || '',
+            iteration: (execution.cursor?.iteration ?? 0) + 1,
+            requestError,
+            scriptErrors
         };
     });
 }
@@ -355,6 +536,7 @@ function extractRunMeta(data, format) {
             collectionName: data.collection?.info?.name || 'Untitled Collection',
             environmentName: data.environment?.name || null,
             runDate: data.run?.timings?.started ? new Date(data.run.timings.started).toLocaleString() : null,
+            wallMs: (data.run?.timings?.completed && data.run?.timings?.started) ? data.run.timings.completed - data.run.timings.started : 0,
             formatLabel: 'Newman CLI'
         };
     }
@@ -373,7 +555,7 @@ function renderReport(data) {
     const format = detectReportFormat(data);
 
     if (format === 'unknown') {
-        alert('Could not find test results in the provided JSON. Please provide a valid Postman Collection Runner export or a Newman JSON reporter output.');
+        alert('Could not find test results in this JSON. Supported: a Postman Collection Runner export or a Newman JSON reporter file. For the Postman CLI, run it with --reporter-json-structure newman.');
         return;
     }
 
@@ -384,6 +566,9 @@ function renderReport(data) {
         return;
     }
 
+    allTests.forEach(t => { t.status = requestStatus(t); });
+    window.maxIteration = allTests.reduce((m, t) => Math.max(m, t.iteration || 1), 1);
+
     // Make every test look-up-able by a stable id regardless of which tab
     // (all/passed/failed) it's rendered under - the detail modal reads
     // from this map.
@@ -391,6 +576,7 @@ function renderReport(data) {
     allTests.forEach(t => { window.testsById[t._id] = t; });
 
     const meta = extractRunMeta(data, format);
+    window.runMeta = meta;
     document.getElementById('reportTitle').textContent = meta.collectionName;
 
     const metaBar = document.getElementById('runMetaBar');
@@ -408,37 +594,41 @@ function renderReport(data) {
     }
 
     // Filter tests
-    passedTests = allTests.filter(t => !t.assertions.some(a => a.status === 'failed'));
-    failedTests = allTests.filter(t => t.assertions.some(a => a.status === 'failed'));
+    passedTests = allTests.filter(t => t.status === 'passed');
+    failedTests = allTests.filter(t => t.status === 'failed' || t.status === 'error');
 
     // Calculate metrics
     const totalTests = allTests.length;
-    const totalAssertions = allTests.reduce((sum, test) => sum + test.assertions.length, 0);
-    const failedAssertions = allTests.reduce((sum, test) => sum + test.assertions.filter(a => a.status === 'failed').length, 0);
-    const passedAssertions = totalAssertions - failedAssertions;
+    const countA = s => allTests.reduce((n, t) => n + t.assertions.filter(a => a.status === s).length, 0);
+    const failedAssertions = countA('failed'), passedAssertions = countA('passed'), skippedAssertions = countA('skipped');
+    const totalAssertions = passedAssertions + failedAssertions;
+    const errorRequests = allTests.filter(t => t.status === 'error').length;
+    const timed = allTests.filter(t => t.responseCode !== 'N/A');
     const totalTime = allTests.reduce((sum, r) => sum + r.time, 0);
-    const avgTime = totalTests > 0 ? (totalTime / totalTests).toFixed(0) : 0;
+    const avgTime = timed.length > 0 ? (totalTime / timed.length).toFixed(0) : 0;
     
     // Calculate percentages
     const passedPercentage = totalAssertions > 0 ? ((passedAssertions / totalAssertions) * 100).toFixed(1) : 0;
     const failedPercentage = totalAssertions > 0 ? ((failedAssertions / totalAssertions) * 100).toFixed(1) : 0;
     
     // Calculate status
-    lastCounts = { passed: passedAssertions, failed: failedAssertions };
+    lastCounts = { passed: passedAssertions, failed: failedAssertions + errorRequests };
     updateOverallStatus();
 
     // Find fastest and slowest tests
-    const fastestTest = allTests.length > 0 ? 
-        Math.min(...allTests.map(t => t.time)) : 0;
+    const fastestTest = timed.length > 0 ? 
+        Math.min(...timed.map(t => t.time)) : 0;
     const slowestTest = allTests.length > 0 ? 
         Math.max(...allTests.map(t => t.time)) : 0;
 
     // Update UI
     document.getElementById('totalTests').textContent = totalTests;
-    document.getElementById('totalAssertions').textContent = totalAssertions;
+    document.getElementById('totalAssertions').innerHTML = skippedAssertions ? `${totalAssertions} <small>(+${skippedAssertions} skipped)</small>` : totalAssertions;
     document.getElementById('passedTests').innerHTML = `${passedAssertions} <small>(${passedPercentage}%)</small>`;
     document.getElementById('failedTests').innerHTML = `${failedAssertions} <small>(${failedPercentage}%)</small>`;
-    document.getElementById('executionTime').textContent = `${(totalTime / 1000).toFixed(2)}s`;
+    const execMs = meta.wallMs > 0 ? meta.wallMs : totalTime;
+    document.getElementById('executionTime').textContent = `${(execMs / 1000).toFixed(2)}s`;
+    document.getElementById('executionTime').title = meta.wallMs > 0 ? 'Wall-clock time of the run' : 'Sum of response times';
     document.getElementById('avgTime').textContent = `${avgTime}ms`;
     document.getElementById('fastestTest').textContent = `${fastestTest}ms`;
     document.getElementById('slowestTest').textContent = `${slowestTest}ms`;
@@ -462,6 +652,7 @@ function renderReport(data) {
     renderTests(allTests, 'testResultsAll');
     renderTests(passedTests, 'testResultsPassed');
     renderTests(failedTests, 'testResultsFailed');
+    renderNotices();
 
     // Initialize charts
     initCharts();
@@ -471,12 +662,21 @@ function renderReport(data) {
     jsonUploadArea.style.display = 'none';
 }
 
+let reportCharts = [];
+function mkChart(el, config) {
+    const chart = new Chart(el.getContext('2d'), config);
+    reportCharts.push(chart);
+    return chart;
+}
+
 function initCharts() {
+    reportCharts.forEach(c => { try { c.destroy(); } catch (e) {} });
+    reportCharts = [];
     try {
         // Response Time Chart
         const responseTimeCtx = document.getElementById('responseTimeChart');
         if (responseTimeCtx) {
-            new Chart(responseTimeCtx.getContext('2d'), {
+            mkChart(responseTimeCtx, {
                 type: 'line',
                 data: {
                     labels: allTests.map((_, i) => `Test ${i+1}`),
@@ -541,7 +741,7 @@ function initCharts() {
                 'rgba(255, 159, 64, 0.7)'
             ];
 
-            new Chart(statusCodeCtx.getContext('2d'), {
+            mkChart(statusCodeCtx, {
                 type: 'bar',
                 data: {
                     labels: Object.keys(statusCodes),
@@ -585,52 +785,58 @@ function initCharts() {
     }
 }
 
-// Renders the report to a proper paginated PDF via html2canvas + jsPDF,
-// instead of window.print() - the browser print engine was inconsistent
-// about page breaks and cut charts/tables off mid-row across browsers.
-async function exportReportToPDF() {
-    const button = document.getElementById('exportPdfBtn');
-    const originalHtml = button.innerHTML;
-    button.disabled = true;
-    button.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>Generating PDF...';
+// Export PDF = the browser's print engine ("Save as PDF").
+// Unlike slicing one tall screenshot, this keeps real selectable text, breaks
+// pages between cards instead of through them, adapts to any paper size, and
+// has no canvas-size limit on long reports. Charts are swapped for sharp
+// images and the light theme is forced while printing (see prepareForPrint).
+let printState = null;
+function prepareForPrint() {
+    const container = document.getElementById('reportContainer');
+    if (printState || !container || container.style.display === 'none') return;
+    const root = document.documentElement;
+    printState = { theme: root.getAttribute('data-bs-theme') };
+    root.setAttribute('data-bs-theme', 'light');
+    root.classList.add('printing');
+    reportCharts.forEach(c => {
+        try {
+            c.resize(1000, 380);
+            const img = new Image();
+            img.className = 'print-img';
+            img.alt = '';
+            img.src = c.toBase64Image();
+            const box = c.canvas.parentNode;
+            box.appendChild(img);
+            box.classList.add('has-img');
+        } catch (e) { /* the live canvas is still printed */ }
+    });
+}
+function restoreAfterPrint() {
+    if (!printState) return;
+    const root = document.documentElement;
+    root.classList.remove('printing');
+    if (printState.theme) root.setAttribute('data-bs-theme', printState.theme); else root.removeAttribute('data-bs-theme');
+    document.querySelectorAll('.print-img').forEach(i => i.remove());
+    document.querySelectorAll('.has-img').forEach(b => b.classList.remove('has-img'));
+    reportCharts.forEach(c => { try { c.resize(); } catch (e) {} });
+    printState = null;
+}
+window.addEventListener('beforeprint', prepareForPrint);
+window.addEventListener('afterprint', restoreAfterPrint);
 
-    try {
-        const reportEl = document.getElementById('reportContainer');
-        const canvas = await html2canvas(reportEl, {
-            scale: 2,
-            useCORS: true,
-            backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff'
-        });
-
-        const { jsPDF } = window.jspdf;
-        const pdf = new jsPDF('p', 'pt', 'a4');
-        const pageWidth = pdf.internal.pageSize.getWidth();
-        const pageHeight = pdf.internal.pageSize.getHeight();
-        const imgWidth = pageWidth;
-        const imgHeight = (canvas.height * imgWidth) / canvas.width;
-
-        const imgData = canvas.toDataURL('image/png');
-        let heightLeft = imgHeight;
-        let position = 0;
-
-        pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-        heightLeft -= pageHeight;
-
-        while (heightLeft > 0) {
-            position -= pageHeight;
-            pdf.addPage();
-            pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-            heightLeft -= pageHeight;
-        }
-
-        pdf.save(`postman-report-${new Date().toISOString().slice(0, 10)}.pdf`);
-    } catch (err) {
-        console.error('PDF export failed:', err);
-        alert('Could not generate the PDF. Please try again.');
-    } finally {
-        button.disabled = false;
-        button.innerHTML = originalHtml;
+function exportReportToPDF() {
+    const meta = window.runMeta || {};
+    const original = document.title;
+    // Browsers use the page title as the default PDF file name
+    document.title = ['Postman report', meta.collectionName, new Date().toISOString().slice(0, 10)].filter(Boolean).join(' - ');
+    window.addEventListener('afterprint', () => { document.title = original; }, { once: true });
+    const hint = document.getElementById('pdfHint');
+    if (hint) {
+        hint.classList.remove('d-none');
+        clearTimeout(window.__pdfHintTimer);
+        window.__pdfHintTimer = setTimeout(() => hint.classList.add('d-none'), 10000);
     }
+    window.print();
 }
 
 // =============================================================
@@ -826,9 +1032,7 @@ async function exportReportToHTML() {
             document.createElement('script');
 
         dataScript.textContent = `
-window.testsById = ${JSON.stringify(
-    window.testsById || {}
-)};
+window.testsById = ${safeJson(prepareExportTests())};
 `;
 
 
@@ -853,6 +1057,26 @@ window.testsById = ${JSON.stringify(
                 ?.appendChild(dataScript);
         }
 
+
+        // Keep the report self-contained: no selector bar, masked URLs, scripts inlined
+        docClone.querySelector('#rt-bar')?.remove();
+        docClone.querySelector('#exportOptions')?.remove();
+        if (document.getElementById('maskSecretsToggle')?.checked !== false) {
+            docClone.querySelectorAll('[id*="-url-"]').forEach(el => { el.textContent = maskUrl(el.textContent); });
+        }
+        for (const scriptEl of Array.from(docClone.querySelectorAll('script[src]'))) {
+            const src = scriptEl.getAttribute('src');
+            if (/report-types\.js$/.test(src)) { scriptEl.remove(); continue; }
+            try {
+                const res = await fetch(new URL(src, document.baseURI).href);
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const code = (await res.text()).replace(/<\/script/gi, '<\\/script');
+                scriptEl.removeAttribute('src');
+                scriptEl.textContent = code;
+            } catch (error) {
+                console.warn('Could not inline script: ' + src, error);
+            }
+        }
 
         // ---------------------------------------------------------
         // 7. Mark report as exported
@@ -960,7 +1184,7 @@ window.testsById = ${JSON.stringify(
 }
 
 function handleFile(file) {
-    if (!file || !file.type.includes('json')) {
+    if (!file || !(file.type.includes('json') || /\.json$/i.test(file.name || ''))) {
         alert('Please upload a valid JSON file.');
         return;
     }
@@ -978,19 +1202,19 @@ function handleFile(file) {
 }
 
 // Event Listeners
-jsonUploadArea.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', () => handleFile(fileInput.files[0]));
+jsonUploadArea?.addEventListener('click', () => fileInput.click());
+fileInput?.addEventListener('change', () => handleFile(fileInput.files[0]));
 
-jsonUploadArea.addEventListener('dragover', (e) => {
+jsonUploadArea?.addEventListener('dragover', (e) => {
     e.preventDefault();
     jsonUploadArea.classList.add('dragover');
 });
 
-jsonUploadArea.addEventListener('dragleave', () => {
+jsonUploadArea?.addEventListener('dragleave', () => {
     jsonUploadArea.classList.remove('dragover');
 });
 
-jsonUploadArea.addEventListener('drop', (e) => {
+jsonUploadArea?.addEventListener('drop', (e) => {
     e.preventDefault();
     jsonUploadArea.classList.remove('dragover');
     if (e.dataTransfer.files.length) {
@@ -998,7 +1222,7 @@ jsonUploadArea.addEventListener('drop', (e) => {
     }
 });
 
-document.getElementById('pasteJsonBtn').addEventListener('click', () => {
+document.getElementById('pasteJsonBtn')?.addEventListener('click', () => {
     const pastedData = prompt('Paste your Postman JSON report data here:');
     if (pastedData) {
         try {
@@ -1011,7 +1235,7 @@ document.getElementById('pasteJsonBtn').addEventListener('click', () => {
     }
 });
 
-viewFailedBtn.addEventListener('click', () => {
+viewFailedBtn?.addEventListener('click', () => {
     const failedTab = new bootstrap.Tab(document.getElementById('failed-tab'));
     failedTab.show();
 });

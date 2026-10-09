@@ -12,9 +12,9 @@ function switchTheme(theme) {
     html.classList.add('light-theme'); html.removeAttribute('data-theme');
     darkBtn?.classList.remove('active'); lightBtn?.classList.add('active');
   }
-  try { localStorage.setItem('theme', theme); } catch (e) {}
+  try { localStorage.setItem('theme', theme); } catch (e) { }
 }
 document.addEventListener('DOMContentLoaded', () => {
-  let saved = null; try { saved = localStorage.getItem('theme'); } catch (e) {}
+  let saved = null; try { saved = localStorage.getItem('theme'); } catch (e) { }
   switchTheme(saved || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
 });

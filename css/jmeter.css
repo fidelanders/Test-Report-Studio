@@ -43,3 +43,5 @@ td.lbl { word-break: break-all; }
   tr { break-inside: avoid; page-break-inside: avoid; }
   .summary-card-title { break-after: avoid; }
 }
+
+.pill-neutral { background: #7f8c8d; color: #fff; }

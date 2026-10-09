@@ -1,0 +1,7 @@
+{
+  "name": "test-report-studio-tests",
+  "private": true,
+  "description": "Automated checks for the JMeter report logic (runs the real page in jsdom)",
+  "scripts": { "test": "node --test" },
+  "devDependencies": { "jsdom": "^26.1.0", "papaparse": "^5.4.1" }
+}

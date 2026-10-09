@@ -21,9 +21,15 @@
     </div>
     <div class="d-flex align-items-center flex-wrap gap-2 no-print">
       <button id="newBtn" class="btn btn-outline-secondary d-none"><i class="fas fa-rotate-left me-2"></i>New report</button>
+      <span id="baseBtns" class="d-none">
+        <button id="baseBtn" class="btn btn-outline-secondary me-2" title="Choose an older run to compare against"><i class="fas fa-code-compare me-2"></i>Compare with baseline</button>
+        <button id="clearBaseBtn" class="btn btn-outline-secondary me-2 d-none"><i class="fas fa-xmark me-2"></i>Clear baseline</button>
+        <input type="file" id="baseFile" accept=".csv,.jtl,.txt" class="d-none">
+      </span>
       <span id="exportBtns" class="d-none">
         <button id="exportPdfBtn" class="btn btn-primary me-2"><i class="fas fa-file-pdf me-2"></i>Export PDF</button>
-        <button id="exportHtmlBtn" class="btn btn-outline-primary me-2"><i class="fas fa-file-code me-2"></i>Export JSON</button>
+        <button id="exportHtmlBtn" class="btn btn-outline-primary me-2"><i class="fas fa-file-code me-2"></i>Export HTML</button>
+        <button id="exportJsonBtn" class="btn btn-outline-secondary me-2"><i class="fas fa-file-lines me-2"></i>Export JSON</button>
       </span>
       <div class="theme-toggle">
         <button class="btn btn-outline-secondary theme-btn active" onclick="switchTheme('light')" title="Light theme"><i class="fas fa-sun"></i></button>
@@ -46,9 +52,9 @@
       <div><label for="tWarn">Warning error rate (%)</label><input id="tWarn" type="number" class="form-control form-control-sm" value="5" step="0.1" min="0" max="100"></div>
       <div><label for="tP95">Max p95 (ms)</label><input id="tP95" type="number" class="form-control form-control-sm" value="800" min="0"></div>
       <div><label for="tP99">Max p99 (ms)</label><input id="tP99" type="number" class="form-control form-control-sm" value="1500" min="0"></div>
-      <div><label for="tRps">Min throughput (req/s)</label><input id="tRps" type="number" class="form-control form-control-sm" placeholder="optional" min="0"></div><div><label for="tRecovery">Max recovery (sec)</label><input id="tRecovery" type="number" class="form-control form-control-sm" value="120" min="0"></div>
+      <div><label for="tRps">Min throughput (req/s)</label><input id="tRps" type="number" class="form-control form-control-sm" placeholder="optional" min="0"></div><div id="tolWrap" class="d-none"><label for="tTol" title="How much slower than the baseline p95 is still acceptable">Baseline tolerance (%)</label><input id="tTol" type="number" class="form-control form-control-sm" value="10" min="0"></div><div><label for="tRecovery">Max recovery (sec)</label><input id="tRecovery" type="number" class="form-control form-control-sm" value="120" min="0"></div>
     </div>
-    <small class="text-muted d-block mt-2">Verdicts use error rate, p95 and p99; throughput is optional. Load/soak use explicit acceptance thresholds. Stress finds the degradation/breaking point rather than treating the breaking point itself as a failure. Spike also checks recovery after the surge. Defaults follow the selected test type; edit a value to override.</small>
+    <small class="text-muted d-block mt-2">Verdicts use error rate, p95 and p99; throughput is optional. Load/soak use explicit acceptance thresholds. Stress reports the breaking point (first interval with over 5% errors or p95 past the limit) and also grades the error rate of the whole run (defaults: pass ≤ 20%, warn ≤ 40%). Spike is scored on the surge itself (users at 50% of peak or more) and also checks recovery. Defaults follow the selected test type; edit a value to override.</small>
   </section>
 
   <div id="out" hidden></div>
@@ -89,21 +95,24 @@ const pct = (h, n, p) => { let s = 0; for (const i of Object.keys(h).map(Number)
 const ALIAS = { ts: ['timeStamp', 'timestamp'], el: ['elapsed'], lb: ['label'], ok: ['success'], cd: ['responseCode'], ms: ['failureMessage', 'responseMessage'], users: ['allThreads'], mt: ['method', 'httpMethod', 'sampleMethod'] };
 const mk = () => ({ n: 0, f: 0, s: 0, mn: 1e12, mx: 0, h: {}, e: {} });
 const add = (o, el, ok, key) => { o.n++; o.s += el; if (el < o.mn) o.mn = el; if (el > o.mx) o.mx = el; const b = bk(el); o.h[b] = (o.h[b] || 0) + 1; if (!ok) { o.f++; if (key) o.e[key] = (o.e[key] || 0) + 1; } };
+// Time-slice helpers: each slice keeps counts and a response-time histogram, so p95/p99 can be computed for any window.
+const mergeBin = (a, b) => { a.n += b.n; a.f += b.f; a.s += b.s; if (b.users > a.users) a.users = b.users; for (const k in b.h) a.h[k] = (a.h[k] || 0) + b.h[k]; };
+const winStat = arr => { const o = { n: 0, f: 0, s: 0, h: {} }; arr.forEach(x => { o.n += x.n; o.f += x.f; o.s += x.s; for (const k in x.h) o.h[k] = (o.h[k] || 0) + x.h[k]; }); return { n: o.n, er: o.n ? o.f / o.n * 100 : 0, avg: o.n ? o.s / o.n : 0, p95: o.n ? pct(o.h, o.n, .95) : 0, p99: o.n ? pct(o.h, o.n, .99) : 0 }; };
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const fmtT = s => s >= 60 ? Math.floor(s / 60) + 'm ' + Math.round(s % 60) + 's' : Math.round(s) + 's';
 const av = a => a.reduce((x, b) => x + b.s, 0) / Math.max(1, a.reduce((x, b) => x + b.n, 0));
-let R = null, charts = [], sk = 'st', touched = false;
+let R = null, BASE = null, charts = [], sk = 'st', touched = false;
 // Pass criteria follow the test type; typing in a field overrides them until the type changes.
-const PRESET = { load: { err: 1, warnErr: 5, p95: 800, p99: 1500 }, stress: { err: 5, warnErr: 10, p95: 2000, p99: 3000 }, spike: { err: 2, warnErr: 5, p95: 1500, p99: 2500 }, soak: { err: 1, warnErr: 5, p95: 800, p99: 1500 }, performance: { err: 1, warnErr: 5, p95: 500, p99: 1000 } };
-let METH = {};
-const disp = lb => { const m = METH[lb]; return m && !lb.toUpperCase().startsWith(m) ? m + ' ' + lb : lb; };
+const PRESET = { load: { err: 1, warnErr: 5, p95: 800, p99: 1500 }, stress: { err: 20, warnErr: 40, p95: 2000, p99: 3000 }, spike: { err: 2, warnErr: 5, p95: 1500, p99: 2500 }, soak: { err: 1, warnErr: 5, p95: 800, p99: 1500 }, performance: { err: 1, warnErr: 5, p95: 500, p99: 1000 } };
+const disp = lb => { const m = (R && R.meth || {})[lb]; return m && !lb.toUpperCase().startsWith(m) ? m + ' ' + lb : lb; };
 
 function fail(m) { $('msg').textContent = m; $('msg').classList.remove('d-none'); $('progWrap').classList.add('d-none'); }
 
-function parse(file) {
-  $('msg').classList.add('d-none'); $('progWrap').classList.remove('d-none'); $('prog').style.width = '0%'; $('out').hidden = true;
-  const T = mk(), L = {}, B = {}, slow = []; METH = {};
+function readJtl(file, onProgress) {
+  return new Promise((resolve, reject) => {
+  const T = mk(), L = {}, slow = [], meth = {}; let B = {}, bw = 1, nb = 0;
+  const halve = () => { const N = {}; for (const k in B) { const nk = Math.floor(k / 2); if (N[nk]) mergeBin(N[nk], B[k]); else N[nk] = B[k]; } B = N; bw *= 2; nb = Object.keys(B).length; };
   let col = null, first = 1e15, last = 0, skip = 0, rows = 0, minSlow = 0, aborted = false;
   Papa.parse(file, {
     header: true, skipEmptyLines: true, worker: true, chunkSize: 2097152,
@@ -113,7 +122,7 @@ function parse(file) {
         const f = res.meta.fields || []; col = {};
         for (const k in ALIAS) col[k] = f.find(x => ALIAS[k].includes(x.replace(/^\uFEFF/, '').trim()));
         const miss = ['ts', 'el', 'lb', 'ok'].filter(k => !col[k]);
-        if (miss.length) { aborted = true; p.abort(); return fail('This does not look like a JMeter CSV with a header row (missing: ' + miss.join(', ') + '). Save results as CSV with the default header line.'); }
+        if (miss.length) { aborted = true; p.abort(); return reject(new Error('This does not look like a JMeter CSV with a header row (missing: ' + miss.join(', ') + '). Save results as CSV with the default header line.')); }
       }
       for (const r of res.data) {
         let ts = +r[col.ts]; if (isNaN(ts)) ts = Date.parse(r[col.ts]);
@@ -122,44 +131,106 @@ function parse(file) {
         rows++;
         const ok = String(r[col.ok]).toLowerCase() === 'true', lb = r[col.lb] || '(no label)';
         const err = ok ? null : ((col.cd && r[col.cd]) || '?') + ' · ' + String((col.ms && r[col.ms]) || '').slice(0, 80), key = ok ? null : lb + '\u0001' + err;
-        if (col.mt && r[col.mt] && !METH[lb]) METH[lb] = String(r[col.mt]).toUpperCase();
+        if (col.mt && r[col.mt] && !meth[lb]) meth[lb] = String(r[col.mt]).toUpperCase();
         add(T, el, ok, key); add(L[lb] || (L[lb] = mk()), el, ok, key);
         if (ts < first) first = ts; if (ts + el > last) last = ts + el;
-        const s = Math.floor(ts / 1000), b = B[s] || (B[s] = { n: 0, f: 0, s: 0, users: 0 });
-        b.n++; b.s += el; if (!ok) b.f++;
+        const sec = Math.floor(ts / 1000); let k = Math.floor(sec / bw), b = B[k];
+        if (!b) { b = B[k] = { n: 0, f: 0, s: 0, users: 0, h: {} }; if (++nb > 600) { halve(); k = Math.floor(sec / bw); b = B[k]; } }
+        b.n++; b.s += el; if (!ok) b.f++; const hi = bk(el); b.h[hi] = (b.h[hi] || 0) + 1;
         const users = col.users ? +r[col.users] : 0; if (users > b.users) b.users = users;
         if (el > minSlow) { slow.push({ lb, el, ts }); if (slow.length >= 40) { slow.sort((a, b) => b.el - a.el); slow.length = 20; minSlow = slow[19].el; } }
       }
-      $('prog').style.width = Math.min(99, (res.meta.cursor / file.size) * 100) + '%';
+      onProgress(Math.min(99, (res.meta.cursor / file.size) * 100));
     },
-    complete() { if (aborted) return; if (!rows) return fail('No valid samples found in this file.'); finish(T, L, B, slow, first, last, rows, skip, file.name); },
-    error: e => fail(e.message || String(e))
+    complete() { if (aborted) return; if (!rows) return reject(new Error('No valid samples found in this file.')); resolve(finish(T, L, B, slow, first, last, rows, skip, file.name, bw, meth)); },
+    error: e => reject(e)
+  });
   });
 }
 
-function finish(T, L, B, slow, first, last, rows, skip, name) {
+function startProgress() { $('msg').classList.add('d-none'); $('progWrap').classList.remove('d-none'); $('prog').style.width = '0%'; }
+function parse(file) {
+  startProgress(); $('out').hidden = true;
+  return readJtl(file, p => { $('prog').style.width = p + '%'; }).then(rep => {
+    R = rep; BASE = null; $('progWrap').classList.add('d-none'); $('drop').classList.add('d-none'); $('newBtn').classList.remove('d-none'); render();
+  }).catch(e => fail(e.message || String(e)));
+}
+// Baseline = an older run to compare the current report against
+function loadBaseline(file) {
+  startProgress();
+  return readJtl(file, p => { $('prog').style.width = p + '%'; }).then(rep => { BASE = rep; $('progWrap').classList.add('d-none'); render(); }).catch(e => fail('Baseline: ' + (e.message || String(e))));
+}
+function clearBaseline() { BASE = null; render(); }
+
+function finish(T, L, B, slow, first, last, rows, skip, name, bw, meth) {
   const dur = Math.max((last - first) / 1000, 1), ks = Object.keys(B).map(Number);
   let k0 = Infinity, k1 = -Infinity; ks.forEach(k => { if (k < k0) k0 = k; if (k > k1) k1 = k; });
   const w = Math.max(1, Math.ceil((k1 - k0 + 1) / 100)), sp = [];
-  for (const k of ks) { const i = Math.floor((k - k0) / w), b = B[k], t = sp[i] || (sp[i] = { n: 0, f: 0, s: 0, users: 0, h: {} }); t.n += b.n; t.f += b.f; t.s += b.s; if (b.users > t.users) t.users = b.users; for (const [bin,count] of Object.entries(b.h || {})) t.h[bin] = (t.h[bin] || 0) + count; }
+for (const k of ks) { const i = Math.floor((k - k0) / w); (sp[i] || (sp[i] = { n: 0, f: 0, s: 0, users: 0, h: {} })); mergeBin(sp[i], B[k]); }
   const tl = Array.from(sp, t => t || { n: 0, f: 0, s: 0, users: 0, h: {} });
   const bucketPct = (b,p) => { const n=b.n||0; let s=0; for (const i of Object.keys(b.h||{}).map(Number).sort((a,c)=>a-c)) { s += b.h[i]; if (s >= n*p) return bv(i); } return 0; };
   tl.forEach(b => { b.p95 = bucketPct(b,.95); b.p99 = bucketPct(b,.99); });
   const sum = o => { const c = p => Math.min(o.mx, pct(o.h, o.n, p)); return { n: o.n, f: o.f, er: o.f / o.n, avg: o.s / o.n, mn: o.mn, mx: o.mx, p90: c(.9), p95: c(.95), p99: c(.99), rps: o.n / dur, top: Object.entries(o.e).sort((a, b) => b[1] - a[1]).slice(0, 10) }; };
-  R = { name, rows, skip, dur, w, tl, tot: sum(T), items: Object.entries(L).map(([k, o]) => ({ name: k, ...sum(o) })), slow: slow.sort((a, b) => b.el - a.el).slice(0, 20) };
-  R.detected = detect(tl); R.peakUsers = tl.reduce((m, b) => Math.max(m, b.users), 0);
-  $('progWrap').classList.add('d-none'); $('drop').classList.add('d-none'); $('newBtn').classList.remove('d-none'); render();
+  const rep = { name, rows, skip, dur, w: w * bw, tl, tot: sum(T), items: Object.entries(L).map(([k, o]) => ({ name: k, ...sum(o) })), slow: slow.sort((a, b) => b.el - a.el).slice(0, 20) };
+  rep.detected = detect(tl, dur); rep.peakUsers = tl.reduce((m, b) => Math.max(m, b.users), 0); rep.meth = meth || {};
+  return rep;
 }
 
-function detect(tl) {
+function detect(tl, dur) {
   const series = tl.map(t => t.users), n = series.length, peak = Math.max(...series);
   if (peak <= 1) return 'performance';
   const q = Math.max(1, n >> 2), avg = a => a.reduce((x, y) => x + y, 0) / a.length;
   const median = [...series].sort((a, b) => a - b)[n >> 1];
   if (peak >= 3 * median && series.filter(x => x >= peak * .5).length / n < .25) return 'spike';
   if (avg(series.slice(0, q)) <= peak * .4 && avg(series.slice(-q)) >= peak * .85 && series.filter(x => x >= peak * .9).length / n < .3) return 'stress';
-  return 'load';
+  return dur >= 7200 ? 'soak' : 'load';
 }
+
+// ---- Baseline comparison: current run vs an older run ----
+const sgn = (v, u) => (v >= 0 ? '+' : '') + v.toFixed(1) + u;
+function compareRuns(cur, base, tol) {
+  const pc = (c, b) => b ? (c - b) / b * 100 : 0, ct = cur.tot, bt = base.tot;
+  const sameLoad = !(cur.peakUsers && base.peakUsers) || Math.abs(cur.peakUsers - base.peakUsers) / base.peakUsers <= .2;
+  const notes = [];
+  if (!sameLoad) notes.push('Peak users differ (' + base.peakUsers + ' in the baseline, ' + cur.peakUsers + ' now), so latency and throughput are not like for like.');
+  if (Math.abs(cur.dur - base.dur) / base.dur > .5) notes.push('Run lengths differ a lot (' + fmtT(base.dur) + ' vs ' + fmtT(cur.dur) + ').');
+  const bm = new Map(base.items.map(i => [i.name, i])), cm = new Map(cur.items.map(i => [i.name, i]));
+  const shared = [...cm.keys()].filter(k => bm.has(k)).length, most = Math.max(bm.size, cm.size);
+  if (shared / most < .8) notes.push('Only ' + shared + ' of ' + most + ' endpoints appear in both runs.');
+  const mkm = (key, label, b, c, mode, dir, f) => {
+    const d = mode === 'pp' ? c - b : pc(c, b), eps = mode === 'pp' ? .5 : tol;
+    const v = dir === 'down' ? (d > eps ? 'worse' : d < -eps ? 'better' : 'same') : dir === 'up' ? (d < -eps ? 'worse' : d > eps ? 'better' : 'same') : 'info';
+    return { key, label, baseline: f(b), current: f(c), change: d, mode, v };
+  };
+  const metrics = [
+    mkm('er', 'Error rate', bt.er * 100, ct.er * 100, 'pp', 'down', v => v.toFixed(2) + '%'),
+    mkm('avg', 'Avg response', bt.avg, ct.avg, 'pct', 'down', v => Math.round(v) + ' ms'),
+    mkm('p95', 'p95', bt.p95, ct.p95, 'pct', 'down', v => Math.round(v) + ' ms'),
+    mkm('p99', 'p99', bt.p99, ct.p99, 'pct', 'down', v => Math.round(v) + ' ms'),
+    mkm('rps', 'Throughput', bt.rps, ct.rps, 'pct', sameLoad ? 'up' : 'info', v => v.toFixed(1) + '/s'),
+    mkm('users', 'Peak users', base.peakUsers, cur.peakUsers, 'pct', 'info', v => v || 'n/a')
+  ];
+  const er = metrics[0], p95 = metrics[2];
+  const rules = [
+    { name: 'p95 vs baseline', val: sgn(p95.change, '%'), lim: 'pass ≤ +' + tol + '% · warn ≤ +' + +(tol * 2.5).toFixed(1) + '%', s: p95.change <= tol ? 'pass' : p95.change <= tol * 2.5 ? 'warn' : 'fail' },
+    { name: 'Error rate vs baseline', val: sgn(er.change, ' pp'), lim: 'pass ≤ +0.5 pp · warn ≤ +2 pp', s: er.change <= .5 ? 'pass' : er.change <= 2 ? 'warn' : 'fail' }
+  ];
+  const rows = [];
+  for (const [name, c] of cm) {
+    const b = bm.get(name);
+    if (!b) { rows.push({ name, c, status: 'new' }); continue; }
+    if (b.n < 30 || c.n < 30) { rows.push({ name, b, c, status: 'low' }); continue; }
+    const dp = pc(c.p95, b.p95), de = c.er * 100 - b.er * 100;
+    const worse = (dp > tol && c.p95 - b.p95 >= 20) || de > .5, better = !worse && ((dp < -tol && b.p95 - c.p95 >= 20) || de < -.5);
+    rows.push({ name, b, c, dp, de, status: worse ? 'worse' : better ? 'better' : 'same' });
+  }
+  for (const [name, b] of bm) if (!cm.has(name)) rows.push({ name, b, status: 'removed' });
+  const order = { worse: 0, new: 1, removed: 2, low: 3, same: 4, better: 5 };
+  rows.sort((a, b) => order[a.status] - order[b.status] || (b.dp || 0) - (a.dp || 0));
+  const counts = {}; rows.forEach(r => counts[r.status] = (counts[r.status] || 0) + 1);
+  return { metrics, rows, notes, counts, rules, tol, sameLoad };
+}
+const resample = (tl, n) => Array.from({ length: n }, (_, i) => { const b = tl[Math.min(tl.length - 1, Math.floor(i / n * tl.length))]; return b && b.n ? Math.round(b.p95) : null; });
 
 function render() {
   if (!R) return;
@@ -168,41 +239,46 @@ function render() {
   if (!touched) { const P = PRESET[ty]; $('tErr').value = P.err; $('tWarn').value = P.warnErr; $('tP95').value = P.p95; $('tP99').value = P.p99; }
   const num = (id, d) => { const v = parseFloat($(id).value); return isNaN(v) ? d : v; }, P0 = PRESET[ty];
   const errL = num('tErr', P0.err), warnErr = Math.max(errL, num('tWarn', P0.warnErr)), p95L = num('tP95', P0.p95), p99L = num('tP99', P0.p99), rL = num('tRps', 0), recoveryL = Math.max(0, num('tRecovery', 120));
-  const errorPct = t.er * 100;
-  const firstQ = tl.slice(0, Math.max(1, Math.ceil(tl.length * .1)));
-  const lastQ = tl.slice(Math.max(0, tl.length - Math.max(1, Math.ceil(tl.length * .1))));
-  const baseAvg = av(firstQ), endAvg = av(lastQ);
-  const baseP95 = firstQ.length ? firstQ.reduce((x,b) => x + (b.p95 || 0) * b.n, 0) / Math.max(1, firstQ.reduce((x,b)=>x+b.n,0)) : 0;
-  const endP95 = lastQ.length ? lastQ.reduce((x,b) => x + (b.p95 || 0) * b.n, 0) / Math.max(1, lastQ.reduce((x,b)=>x+b.n,0)) : 0;
-  const driftPct = baseP95 ? ((endP95 - baseP95) / baseP95) * 100 : 0;
-  const spikePeak = tl.reduce((m, b, i) => b.users > (tl[m]?.users || 0) ? i : m, 0);
-  const spikeBase = baseP95;
-  const recoveryIndex = tl.findIndex((b, i) => i > spikePeak && b.n && (b.p95 || 0) <= 1.2 * spikeBase);
-  const recoverySec = recoveryIndex < 0 ? null : (recoveryIndex - spikePeak) * R.w;
-  let rules = [];
-  if (ty === 'stress') {
-    const breakIndex = tl.findIndex(b => b.n && (b.f / b.n) * 100 > warnErr);
-    const degradationIndex = tl.findIndex(b => b.n && ((b.f / b.n) * 100 > errL || b.s / b.n > p95L));
-    const bi = breakIndex >= 0 ? breakIndex : degradationIndex;
-    rules = [
-      { name: 'Pre-break error rate', val: errorPct.toFixed(2) + '%', lim: 'observe degradation / breaking point', s: 'pass' },
-      { name: 'Breaking point', val: bi >= 0 ? ((tl[bi].users || '?') + ' users') : 'Not reached', lim: 'capacity discovery', s: 'pass' }
-    ];
-  } else {
-    rules = [
-      { name: 'Error rate', val: errorPct.toFixed(2) + '%', lim: 'pass ≤ ' + errL + '% · warn ≤ ' + warnErr + '%', s: errorPct <= errL ? 'pass' : errorPct <= warnErr ? 'warn' : 'fail' },
-      { name: 'p95', val: Math.round(t.p95) + ' ms', lim: 'pass ≤ ' + p95L + ' ms · warn ≤ ' + Math.round(p95L * 1.5) + ' ms', s: t.p95 <= p95L ? 'pass' : t.p95 <= p95L * 1.5 ? 'warn' : 'fail' },
-      { name: 'p99', val: Math.round(t.p99) + ' ms', lim: 'pass ≤ ' + p99L + ' ms · warn ≤ ' + Math.round(p99L * 1.5) + ' ms', s: t.p99 <= p99L ? 'pass' : t.p99 <= p99L * 1.5 ? 'warn' : 'fail' }
-    ];
-    if (rL > 0) rules.push({ name: 'Throughput', val: t.rps.toFixed(1) + ' req/s', lim: 'pass ≥ ' + rL + ' · warn ≥ ' + (rL * .9).toFixed(1), s: t.rps >= rL ? 'pass' : t.rps >= rL * .9 ? 'warn' : 'fail' });
-    if (ty === 'spike') rules.push({ name: 'Recovery', val: recoverySec === null ? 'Not recovered' : fmtT(recoverySec), lim: '≤ ' + fmtT(recoveryL) + ' and ≤120% baseline p95', s: recoverySec === null ? 'fail' : recoverySec <= recoveryL ? 'pass' : 'warn' });
-    if (ty === 'soak') rules.push({ name: 'Latency drift', val: driftPct.toFixed(1) + '%', lim: 'pass ≤ 20% · warn ≤ 30%', s: driftPct <= 20 ? 'pass' : driftPct <= 30 ? 'warn' : 'fail' });
-  }
-  const st = rules.some(r => r.s === 'fail') ? 'fail' : rules.some(r => r.s === 'warn') ? 'warn' : 'pass';
-  let note = '';
-  if (ty === 'stress') { const i = tl.findIndex(b => b.n && ((b.f / b.n) * 100 > warnErr || b.s / b.n > p95L)); note = i < 0 ? 'No degradation threshold was crossed in this run; continue increasing load in a controlled stress test to find the capacity boundary.' : 'Degradation point: approximately ' + (tl[i].users || '?') + ' users, ' + fmtT(i * R.w) + ' into the test. Stress testing is treated as capacity discovery, not a normal pass/fail load gate.'; }
-  if (ty === 'spike') { note = recoverySec === null ? 'Response time did not recover to ≤120% of baseline p95.' : 'Recovered to ≤120% of baseline p95 (~' + Math.round(spikeBase) + ' ms) in ' + fmtT(recoverySec) + ' after peak load; target is ≤' + fmtT(recoveryL) + '.'; }
-  if (ty === 'soak') { note = 'Latency drift uses p95 response time, comparing the first 10% of the run with the last 10%. CPU, memory and connection-pool trends require JMeter/backend monitoring data and are not inferred from this CSV.'; }
+const errorPct = t.er * 100;
+const DEGRADE_ERR = 5; // stress: a slice is degraded when over 5% of its requests fail or its p95 passes the limit
+const grade = (v, lim, le) => le ? (v <= lim ? 'pass' : v <= lim * 1.5 ? 'warn' : 'fail') : (v >= lim ? 'pass' : v >= lim * .9 ? 'warn' : 'fail');
+const peak = R.peakUsers, win10 = Math.max(1, Math.ceil(tl.length * .1));
+const spikeStart = peak > 1 ? tl.findIndex(b => b.users >= peak * .5) : -1;
+let spikeEnd = -1; for (let k = tl.length - 1; k >= 0; k--) if (tl[k].users >= peak * .5) { spikeEnd = k; break; }
+const base = winStat(ty === 'spike' && spikeStart > 0 ? tl.slice(0, spikeStart) : tl.slice(0, win10));
+const hasPost = spikeEnd >= 0 && spikeEnd < tl.length - 1;
+const recIdx = ty === 'spike' && hasPost ? tl.findIndex((b, k) => k > spikeEnd && b.n >= 5 && b.p95 <= 1.2 * base.p95) : -1;
+const recoverySec = recIdx < 0 ? null : (recIdx - spikeEnd) * R.w;
+const firstW = winStat(tl.slice(0, win10)), lastW = winStat(tl.slice(-win10));
+const driftPct = firstW.p95 ? (lastW.p95 - firstW.p95) / firstW.p95 * 100 : 0;
+const bi = ty === 'stress' ? tl.findIndex(b => b.n >= 10 && ((b.f / b.n) * 100 > DEGRADE_ERR || b.p95 > p95L)) : -1;
+const stableW = winStat(bi < 0 ? tl : tl.slice(0, Math.max(bi, 1)));
+const spikeW = ty === 'spike' && spikeStart >= 0 ? winStat(tl.slice(spikeStart, spikeEnd + 1)) : null; // spike = slices with users >= 50% of peak
+const V = spikeW ? { er: spikeW.er, p95: spikeW.p95, p99: spikeW.p99 } : { er: errorPct, p95: t.p95, p99: t.p99 }, sfx = spikeW ? ' (during spike)' : '';
+let rules = [];
+if (ty === 'stress') {
+rules = [
+{ name: 'Error rate (whole run)', val: errorPct.toFixed(2) + '%', lim: 'pass ≤ ' + errL + '% · warn ≤ ' + warnErr + '%', s: errorPct <= errL ? 'pass' : errorPct <= warnErr ? 'warn' : 'fail' },
+{ name: 'p95 before breaking point', val: Math.round(stableW.p95) + ' ms', lim: 'pass ≤ ' + p95L + ' ms · warn ≤ ' + Math.round(p95L * 1.5) + ' ms', s: grade(stableW.p95, p95L, 1) },
+{ name: 'Breaking point', val: bi >= 0 ? '~' + (tl[bi].users || '?') + ' users' : 'Not reached', lim: 'capacity discovery', s: 'pass' }
+];
+} else {
+rules = [
+{ name: 'Error rate' + sfx, val: V.er.toFixed(2) + '%', lim: 'pass ≤ ' + errL + '% · warn ≤ ' + warnErr + '%', s: V.er <= errL ? 'pass' : V.er <= warnErr ? 'warn' : 'fail' },
+{ name: 'p95' + sfx, val: Math.round(V.p95) + ' ms', lim: 'pass ≤ ' + p95L + ' ms · warn ≤ ' + Math.round(p95L * 1.5) + ' ms', s: grade(V.p95, p95L, 1) },
+{ name: 'p99' + sfx, val: Math.round(V.p99) + ' ms', lim: 'pass ≤ ' + p99L + ' ms · warn ≤ ' + Math.round(p99L * 1.5) + ' ms', s: grade(V.p99, p99L, 1) }
+];
+if (rL > 0) rules.push({ name: 'Throughput', val: t.rps.toFixed(1) + ' req/s', lim: 'pass ≥ ' + rL + ' · warn ≥ ' + (rL * .9).toFixed(1), s: grade(t.rps, rL, 0) });
+if (ty === 'spike') rules.push({ name: 'Recovery', val: !hasPost ? 'No data after spike' : recoverySec === null ? 'Not recovered' : fmtT(recoverySec), lim: '≤ ' + fmtT(recoveryL) + ' and ≤120% of baseline p95', s: !hasPost ? 'warn' : recoverySec === null ? 'fail' : recoverySec <= recoveryL ? 'pass' : 'warn' });
+if (ty === 'soak') rules.push({ name: 'Latency drift', val: (driftPct >= 0 ? '+' : '') + driftPct.toFixed(1) + '%', lim: 'pass ≤ 20% · warn ≤ 30%', s: driftPct <= 20 ? 'pass' : driftPct <= 30 ? 'warn' : 'fail' });
+}
+const tol = Math.max(0, num('tTol', 10)), cmp = BASE ? compareRuns(R, BASE, tol) : null;
+if (cmp) rules.push(...cmp.rules);
+const st = rules.some(r => r.s === 'fail') ? 'fail' : rules.some(r => r.s === 'warn') ? 'warn' : 'pass';
+let note = '';
+if (ty === 'stress') note = bi < 0 ? 'No degradation point reached: every interval stayed under 5% errors and within the p95 limit. Raise the load to find the capacity boundary.' : 'Breaking point: errors passed 5% or p95 passed ' + p95L + ' ms at about ' + (tl[bi].users || '?') + ' users, ' + fmtT(bi * R.w) + ' into the test. The verdict also grades the error rate of the whole run.';
+if (ty === 'spike') note = !hasPost ? 'The run ends before the spike does, so recovery cannot be measured.' : recoverySec === null ? 'Response time did not return to ≤120% of the baseline p95 (~' + Math.round(base.p95) + ' ms) after the spike.' : 'Back to ≤120% of the baseline p95 (~' + Math.round(base.p95) + ' ms) ' + fmtT(recoverySec) + ' after the spike ended; target is ≤' + fmtT(recoveryL) + '.';
+if (ty === 'soak') note = 'Latency drift compares p95 in the first 10% of the run (' + Math.round(firstW.p95) + ' ms) with the last 10% (' + Math.round(lastW.p95) + ' ms). CPU, memory and connection-pool trends need monitoring data and are not inferred from this CSV.';
   if (st === 'warn') note += (note ? ' ' : '') + 'Fix the flagged issues and re-run the test.';
   R.items.forEach(i => { const er = i.er * 100; i.s = ty === 'stress' ? (er > warnErr || i.p95 > p95L * 1.5 ? 'fail' : er > errL || i.p95 > p95L ? 'warn' : 'pass') : (er <= errL && i.p95 <= p95L && i.p99 <= p99L ? 'pass' : er <= warnErr && i.p95 <= p95L * 1.5 && i.p99 <= p99L * 1.5 ? 'warn' : 'fail'); });
   const rk = { fail: 0, warn: 1, pass: 2 }, val = (i, k) => k === 'st' ? rk[i.s] : i[k];
@@ -211,6 +287,16 @@ function render() {
   const th = (k, l) => '<th data-k="' + k + '"' + (k === 'name' ? ' style="text-align:left"' : '') + '>' + l + (sk === k ? ' <i class="fas fa-caret-down"></i>' : '') + '</th>';
   const sev = { pass: 'success', warn: 'warning', fail: 'danger' }, word = { pass: 'PASSED', warn: 'WARNING · FIX &amp; RE-RUN', fail: 'FAILED' };
   $('metaFile').textContent = R.name; $('metaType').textContent = ty + ' test' + (auto ? ' (auto-detected)' : ''); $('metaRows').textContent = R.rows.toLocaleString() + ' samples'; $('runMetaBar').style.display = '';
+  const badge = v => '<span class="badge ' + ({ worse: 'pill-fail', better: 'pill-pass' }[v] || 'pill-neutral') + '">' + ({ worse: 'Worse', better: 'Better', same: 'Same', info: 'Info' }[v]) + '</span>';
+  const f1 = x => Math.round(x.p95) + ' ms', f2 = x => (x.er * 100).toFixed(2) + '%', stat = { worse: ['pill-fail', 'Regression'], better: ['pill-pass', 'Improved'], same: ['pill-neutral', 'Same'], new: ['pill-neutral', 'New'], removed: ['pill-neutral', 'Removed'], low: ['pill-neutral', 'Low data'] };
+  const cmpHtml = cmp ? '<div class="summary-card mb-4"><h4 class="summary-card-title"><i class="fas fa-code-compare me-2"></i>Compared with baseline: ' + esc(BASE.name) + '</h4>' +
+    (cmp.notes.length ? '<div class="alert alert-warning small">' + cmp.notes.map(esc).join(' ') + '</div>' : '') +
+    '<div class="table-responsive"><table class="table table-sm align-middle"><thead><tr><th style="text-align:left">Metric</th><th>Baseline</th><th>Now</th><th>Change</th><th>Result</th></tr></thead><tbody>' +
+    cmp.metrics.map(m => '<tr><td>' + m.label + '</td><td>' + m.baseline + '</td><td>' + m.current + '</td><td>' + sgn(m.change, m.mode === 'pp' ? ' pp' : '%') + '</td><td>' + badge(m.v) + '</td></tr>').join('') + '</tbody></table></div>' +
+    '<div class="chart-container" style="height:260px"><canvas id="c3"></canvas></div>' +
+    '<div class="small text-muted mt-3 mb-2">Endpoints: ' + ['worse', 'new', 'removed', 'low', 'same', 'better'].filter(k => cmp.counts[k]).map(k => cmp.counts[k] + ' ' + stat[k][1].toLowerCase()).join(' · ') + '</div>' +
+    '<div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th style="text-align:left">Endpoint</th><th>p95 baseline</th><th>p95 now</th><th>Change</th><th>Errors baseline</th><th>Errors now</th><th>Result</th></tr></thead><tbody>' +
+    cmp.rows.map(r => '<tr><td class="lbl">' + esc(disp(r.name)) + '</td><td>' + (r.b ? f1(r.b) : '—') + '</td><td>' + (r.c ? f1(r.c) : '—') + '</td><td>' + (r.dp != null ? sgn(r.dp, '%') : '—') + '</td><td>' + (r.b ? f2(r.b) : '—') + '</td><td>' + (r.c ? f2(r.c) : '—') + '</td><td><span class="badge ' + stat[r.status][0] + '">' + stat[r.status][1] + '</span></td></tr>').join('') + '</tbody></table></div></div>' : '';
   $('out').innerHTML =
     '<section class="overall-status ' + st + ' mb-4"><div><div class="overall-status-main"><span class="badge status-' + sev[st] + '">' + word[st] + '</span><span>' + ty[0].toUpperCase() + ty.slice(1) + ' test · ' + fmtT(R.dur) + '</span></div>' +
     '<div class="chip-row">' + rules.map(r => '<span class="badge pill-' + r.s + '">' + r.name + ' ' + r.val + ' (' + r.lim + ')</span>').join('') + '</div>' +
@@ -219,7 +305,7 @@ function render() {
     kpi('clock', 'bg-info', Math.round(t.avg) + 'ms', 'Avg Response Time', 'Mean of all samples') + kpi('gauge-high', 'bg-warning', Math.round(t.p95) + 'ms', 'p95 Response Time', '95% of requests were faster') +
     kpi('bolt', 'bg-primary', Math.round(t.p99) + 'ms', 'p99 Response Time', 'Slowest 1% start here') + kpi('arrow-trend-up', 'bg-success', t.rps.toFixed(1) + '/s', 'Throughput', 'Requests per second') +
     kpi('users', 'bg-info', R.peakUsers || 'n/a', 'Peak Users', 'Most active users at once') + kpi('hourglass-half', 'bg-warning', fmtT(R.dur), 'Test Duration', 'First to last sample') + '</section>' +
-    '<div class="row mb-4"><div class="col-lg-6 mb-3 mb-lg-0"><div class="chart-card"><h4 class="summary-card-title"><i class="fas fa-chart-line me-2"></i>Response Time &amp; Errors</h4><div class="chart-container"><canvas id="c1"></canvas></div></div></div>' +
+    cmpHtml + '<div class="row mb-4"><div class="col-lg-6 mb-3 mb-lg-0"><div class="chart-card"><h4 class="summary-card-title"><i class="fas fa-chart-line me-2"></i>Response Time &amp; Errors</h4><div class="chart-container"><canvas id="c1"></canvas></div></div></div>' +
     '<div class="col-lg-6"><div class="chart-card"><h4 class="summary-card-title"><i class="fas fa-users me-2"></i>Throughput &amp; Users</h4><div class="chart-container"><canvas id="c2"></canvas></div></div></div></div>' +
     '<div class="summary-card mb-4"><h4 class="summary-card-title"><i class="fas fa-list-check me-2"></i>Endpoints</h4><div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr>' + th('name', 'Label') + th('n', 'Requests') + th('er', 'Error %') + th('avg', 'Avg ms') + th('p95', 'p95') + th('p99', 'p99') + th('mx', 'Max') + th('rps', 'Req/s') + th('st', 'Status') + '</tr></thead><tbody>' +
     items.map(i => '<tr><td class="lbl">' + esc(i.name) + '</td><td>' + i.n.toLocaleString() + '</td><td>' + (i.er * 100).toFixed(2) + '</td><td>' + Math.round(i.avg) + '</td><td>' + Math.round(i.p95) + '</td><td>' + Math.round(i.p99) + '</td><td>' + i.mx + '</td><td>' + i.rps.toFixed(1) + '</td><td><span class="badge pill-' + i.s + '">' + i.s.toUpperCase() + '</span></td></tr>').join('') + '</tbody></table></div></div>' +
@@ -232,10 +318,13 @@ function render() {
     new Chart($('c1'), { type: 'line', data: { labels: lb, datasets: [{ label: 'Avg response (ms)', data: tl.map(b => b.n ? b.s / b.n : null), borderColor: '#8E44AD', tension: .25, pointRadius: 0, yAxisID: 'y' }, { type: 'bar', label: 'Errors', data: tl.map(b => b.f), backgroundColor: '#dc2626', yAxisID: 'y1' }] }, options: o('ms', 'errors') }),
     new Chart($('c2'), { type: 'line', data: { labels: lb, datasets: [{ label: 'Throughput (req/s)', data: tl.map(b => b.n / R.w), borderColor: '#16a34a', tension: .25, pointRadius: 0, yAxisID: 'y' }, { label: 'Active users', data: tl.map(b => b.users), borderColor: '#d63384', pointRadius: 0, yAxisID: 'y1' }] }, options: o('req/s', 'users') })
   ];
+  if (cmp) charts.push(new Chart($('c3'), { type: 'line', data: { labels: Array.from({ length: 50 }, (_, i) => Math.round(i / 49 * 100) + '%'), datasets: [{ label: 'Baseline p95 (ms)', data: resample(BASE.tl, 50), borderColor: '#7f8c8d', borderDash: [6, 4], pointRadius: 0, tension: .25, spanGaps: true }, { label: 'Now p95 (ms)', data: resample(tl, 50), borderColor: '#8E44AD', pointRadius: 0, tension: .25, spanGaps: true }] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { title: { display: true, text: 'p95 (ms)' } }, x: { title: { display: true, text: 'Progress through the run' } } } } }));
+  $('baseBtns').classList.remove('d-none'); $('baseBtn').classList.toggle('d-none', !!BASE); $('clearBaseBtn').classList.toggle('d-none', !BASE); $('tolWrap').classList.toggle('d-none', !BASE);
   $('exportBtns').classList.remove('d-none');
   $('exportPdfBtn').onclick = () => window.print();
-  $('exportHtmlBtn').onclick = () => {
-    const b = new Blob([JSON.stringify({ source: R.name, testType: ty, verdict: { status: st, rules, criteria: { maxErrorRatePercent: errL, warningErrorRatePercent: warnErr, maxP95Ms: p95L, maxP99Ms: p99L, minThroughput: rL || null, maxRecoverySeconds: recoveryL }, notes: note }, peakUsers: R.peakUsers, totals: t, endpoints: R.items }, null, 2)], { type: 'application/json' });
+  $('exportHtmlBtn').onclick = () => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([buildStandaloneHtml()], { type: 'text/html' })); a.download = 'jmeter-report.html'; a.click(); };
+  $('exportJsonBtn').onclick = () => {
+    const b = new Blob([JSON.stringify({ source: R.name, testType: ty, verdict: { status: st, rules, criteria: { maxErrorRatePercent: errL, warningErrorRatePercent: warnErr, maxP95Ms: p95L, maxP99Ms: p99L, minThroughput: rL || null, maxRecoverySeconds: recoveryL }, notes: note }, peakUsers: R.peakUsers, comparison: cmp ? { baseline: BASE.name, tolerancePercent: cmp.tol, metrics: cmp.metrics, endpoints: cmp.rows.map(r => ({ name: r.name, status: r.status, baselineP95Ms: r.b ? Math.round(r.b.p95) : null, currentP95Ms: r.c ? Math.round(r.c.p95) : null, p95ChangePercent: r.dp == null ? null : +r.dp.toFixed(1), errorRateChangePp: r.de == null ? null : +r.de.toFixed(2) })), rules: cmp.rules } : null, totals: t, endpoints: R.items }, null, 2)], { type: 'application/json' });
     const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'jmeter-summary.json'; a.click();
   };
 }
@@ -244,12 +333,32 @@ $('out').onclick = e => { const k = e.target.dataset && e.target.dataset.k; if (
 $('type').addEventListener('input', () => { touched = false; render(); });
 ['tErr', 'tWarn', 'tP95', 'tP99'].forEach(id => $(id).addEventListener('input', () => { touched = true; render(); }));
 $('tRps').addEventListener('input', render);
+$('baseBtn').onclick = () => $('baseFile').click();
+$('baseFile').onchange = e => { const f = e.target.files[0]; e.target.value = ''; if (f) loadBaseline(f); };
+$('clearBaseBtn').onclick = () => clearBaseline();
+$('tTol').addEventListener('input', render);
 $('drop').onclick = () => $('file').click();
 $('file').onchange = e => e.target.files[0] && parse(e.target.files[0]);
 $('drop').ondragover = e => { e.preventDefault(); $('drop').classList.add('over'); };
 $('drop').ondragleave = () => $('drop').classList.remove('over');
 $('newBtn').onclick = () => location.reload();
 $('drop').ondrop = e => { e.preventDefault(); $('drop').classList.remove('over'); e.dataTransfer.files[0] && parse(e.dataTransfer.files[0]); };
+
+// Standalone HTML export: one offline file with the verdict, tables and charts (as images).
+const EXPORT_CSS = ':root{--bd:#dee2e6;--mu:#6c757d;--ok:#27ae60;--wa:#f39c12;--er:#e74c3c}*{box-sizing:border-box}body{font:14px/1.45 system-ui,sans-serif;color:#212529;background:#f5f6fa;margin:0;padding:20px}.wrap{max-width:1200px;margin:0 auto}h1{font-size:22px;margin:0 0 4px}.meta{color:var(--mu);margin-bottom:16px}'
+  + '.overall-status,.kpi-card,.chart-card,.summary-card{background:#fff;border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:16px}.overall-status.pass{border-left:6px solid var(--ok)}.overall-status.warn{border-left:6px solid var(--wa)}.overall-status.fail{border-left:6px solid var(--er)}'
+  + '.badge{display:inline-block;padding:3px 10px;border-radius:99px;color:#fff;font-size:12px;font-weight:600}.status-success,.pill-pass{background:var(--ok)}.status-warning,.pill-warn{background:var(--wa)}.status-danger,.pill-fail{background:var(--er)}.chip-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}.overall-status-main{display:flex;gap:12px;align-items:center;font-weight:600}'
+  + '.kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-bottom:16px}.kpi-card{margin:0}.kpi-icon,.kpi-tooltip{display:none}.kpi-content h3{font-size:12px;color:var(--mu);margin:0 0 4px;font-weight:600}.kpi-value{font-size:22px;font-weight:700}'
+  + '.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px}.chart-card img{width:100%;height:auto;display:block}.summary-card-title{font-size:16px;margin:0 0 10px}table{width:100%;border-collapse:collapse}th,td{padding:6px 8px;border-bottom:1px solid var(--bd);text-align:right}th:first-child,td:first-child,td.lbl{text-align:left;word-break:break-all}th{color:var(--mu);font-size:12px}.text-end{text-align:right}.pill-neutral{background:#7f8c8d}.alert{background:#fff3cd;border:1px solid #ffecb5;border-radius:8px;padding:6px 10px;margin-bottom:10px}.chart-container{height:260px}.text-muted,.small{color:var(--mu)}.small{font-size:12px}.mt-1{margin-top:4px}.mt-2{margin-top:8px}.mb-4{margin-bottom:16px}'
+  + '@media print{body{background:#fff;padding:0}.overall-status,.kpi-card,.chart-card,.summary-card,tr{break-inside:avoid}}';
+function buildStandaloneHtml() {
+  const imgs = charts.map(c => { try { c.resize(1000, 380); return c.toBase64Image(); } finally { c.resize(); } });
+  const clone = $('out').cloneNode(true);
+  clone.querySelectorAll('canvas').forEach(cv => { const im = document.createElement('img'); im.alt = 'chart'; im.src = imgs[{ c1: 0, c2: 1, c3: 2 }[cv.id]] || ''; cv.replaceWith(im); });
+  clone.querySelectorAll('i').forEach(x => x.remove());
+  clone.querySelectorAll('[data-k]').forEach(x => x.removeAttribute('data-k'));
+  return '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>JMeter report · ' + esc(R.name) + '</title><style>' + EXPORT_CSS + '</style></head><body><div class="wrap"><h1>JMeter Report</h1><div class="meta">' + esc(R.name) + ' · ' + esc($('metaType').textContent) + ' · ' + esc($('metaRows').textContent) + ' · generated ' + esc(new Date().toLocaleString()) + ' by Test Report Studio</div>' + clone.innerHTML + '</div></body></html>';
+}
 
 // Print / Save as PDF: swap charts for sharp full-width images so nothing is cut off on any paper size.
 let prevTheme = null;

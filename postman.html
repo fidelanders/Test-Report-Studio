@@ -3,7 +3,7 @@
  * 🧑‍💻 Created by Fidelis Ogbeni
  * 🕓 Version: 1.0.0
  * 📅 Year: 2025
- * 📬 GitHub: https://github.com/fidelisogbeni/postman-html-reporter
+ * 📬 GitHub: https://github.com/fidelanders/Test-Report-Studio
  * 
  * 📄 Licensed under MIT (see LICENSE file)
  * This tool converts Postman JSON test results into a beautiful HTML report.
@@ -26,8 +26,6 @@
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 
   <link rel="stylesheet" href="css/styles.css">
   <link rel="stylesheet" href="css/themeStyles.css" id="themeStyles">
@@ -48,6 +46,10 @@
         <button id="exportHtmlBtn" class="btn btn-outline-primary me-2 no-print" onclick="exportReportToHTML()">
           <i class="fas fa-file-code me-2"></i>Export HTML
         </button>
+        <div id="exportOptions" class="small me-3 no-print">
+          <div class="form-check mb-0"><input class="form-check-input" type="checkbox" id="maskSecretsToggle" checked><label class="form-check-label" for="maskSecretsToggle" title="Hides passwords, tokens, API keys and cookies in the exported file">Mask secrets in HTML export</label></div>
+          <div class="form-check mb-0"><input class="form-check-input" type="checkbox" id="includeBodiesToggle" checked><label class="form-check-label" for="includeBodiesToggle">Include bodies &amp; headers</label></div>
+        </div>
         <div class="theme-toggle">
           <button class="btn btn-outline-secondary theme-btn active" onclick="switchTheme('light')" title="Light theme">
             <i class="fas fa-sun"></i>
@@ -59,6 +61,8 @@
       </div>
     </header>
 
+    <div id="pdfHint" class="alert alert-info py-2 small d-none no-print" role="status">In the print window choose <strong>Save as PDF</strong> as the destination. Any paper size works; the layout adapts. The tab you are viewing (All, Passed or Failed) is the one that prints.</div>
+
     <!-- Run Metadata Bar -->
     <div id="runMetaBar" class="run-meta-bar mb-3" style="display: none;">
       <span class="run-meta-item"><i class="fas fa-file-code me-1"></i><span id="metaFormatBadge" class="badge bg-secondary">Format</span></span>
@@ -69,6 +73,8 @@
     <!-- Main Content -->
     <div id="reportContainer" style="display: none;">
       <!-- Overall Status (computed from real results; thresholds are adjustable) -->
+      <div id="runNotices"></div>
+
       <section class="overall-status mb-4" id="overallStatus" style="display: none;">
         <div class="overall-status-main">
           <span id="overallStatusBadge" class="badge">-</span>
@@ -339,6 +345,8 @@
             <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
           </div>
           <div class="modal-body">
+            <div id="detailSummary" class="small text-muted mb-2 text-break"></div>
+            <div id="detailError" class="alert alert-danger py-2 small d-none"></div>
             <ul class="nav nav-tabs" id="detailTab" role="tablist">
               <li class="nav-item" role="presentation">
                 <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#detailRequest" type="button" role="tab">Request</button>
@@ -349,9 +357,21 @@
             </ul>
             <div class="tab-content pt-3">
               <div class="tab-pane fade show active" id="detailRequest" role="tabpanel">
+                <h6 class="small text-uppercase text-muted">Headers</h6>
+                <table class="table table-sm detail-headers"><tbody id="requestHeadersBody"></tbody></table>
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                  <h6 class="small text-uppercase text-muted mb-0">Body <span id="requestBodyMeta" class="ms-2 text-lowercase"></span></h6>
+                  <span><button type="button" class="btn btn-outline-secondary btn-sm me-1" onclick="copyBody('request')"><i class="fas fa-copy me-1"></i>Copy</button><button type="button" class="btn btn-outline-secondary btn-sm" onclick="downloadBody('request')"><i class="fas fa-download me-1"></i>Download</button></span>
+                </div>
                 <pre class="detail-body-pre"><code id="requestBodyContent"></code></pre>
               </div>
               <div class="tab-pane fade" id="detailResponse" role="tabpanel">
+                <h6 class="small text-uppercase text-muted">Headers</h6>
+                <table class="table table-sm detail-headers"><tbody id="responseHeadersBody"></tbody></table>
+                <div class="d-flex justify-content-between align-items-center mb-1">
+                  <h6 class="small text-uppercase text-muted mb-0">Body <span id="responseBodyMeta" class="ms-2 text-lowercase"></span></h6>
+                  <span><button type="button" class="btn btn-outline-secondary btn-sm me-1" onclick="copyBody('response')"><i class="fas fa-copy me-1"></i>Copy</button><button type="button" class="btn btn-outline-secondary btn-sm" onclick="downloadBody('response')"><i class="fas fa-download me-1"></i>Download</button></span>
+                </div>
                 <pre class="detail-body-pre"><code id="responseBodyContent"></code></pre>
               </div>
             </div>

@@ -18,4 +18,4 @@ We welcome:
 2. Clone your fork:
 
    ```bash
-   git clone https://github.com/fidelanders/postman-html-reporter.git
+   git clone https://github.com/fidelanders/Test-Report-Studio.git
