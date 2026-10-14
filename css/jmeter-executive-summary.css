@@ -1,0 +1,22 @@
+/* Test-Report-Studio: extras for the JMeter Executive Summary.
+   Link AFTER css/executive-summary.css in jmeter.html <head>. */
+
+.es.es-info { --es-accent: #7c3aed; --es-bg: #f5f3ff; }   /* matches the JMeter purple theme */
+
+.es-controls { margin: 0 0 12px; font-size: .9rem; }
+.es-controls summary { cursor: pointer; color: #475569; font-weight: 600; }
+.es-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; margin-top: 8px; }
+.es-grid label { display: flex; flex-direction: column; gap: 4px; font-size: .8rem; color: #475569; }
+.es-grid input, .es-grid select {
+  padding: 6px 8px; border: 1px solid #cbd5e1; border-radius: 8px; font: inherit; background: #fff; color: #0f172a;
+}
+
+[data-theme="dark"] .es.es-info, .dark .es.es-info, body.dark-mode .es.es-info { --es-bg: #221a3a; }
+[data-theme="dark"] .es-controls summary, .dark .es-controls summary, body.dark-mode .es-controls summary,
+[data-theme="dark"] .es-grid label, .dark .es-grid label, body.dark-mode .es-grid label { color: #94a3b8; }
+[data-theme="dark"] .es-grid input, [data-theme="dark"] .es-grid select,
+.dark .es-grid input, .dark .es-grid select,
+body.dark-mode .es-grid input, body.dark-mode .es-grid select { background: #0f172a; color: #e2e8f0; border-color: #334155; }
+
+/* the settings panel is for on-screen use only */
+@media print { .es-controls { display: none; } }
