@@ -147,3 +147,12 @@ here — flagging so nothing is assumed done. Happy to do any of these next.
 - Charts are now tracked and destroyed when a second report is loaded, instead of stacking on the same canvas.
 - Removed the jsPDF and html2canvas dependencies. Ctrl+P / Cmd+P gets the same print layout.
 
+## Executive Summary (Postman report)
+
+- New plain-English **Executive Summary** at the bottom of the Postman report: verdict, what the test covered,
+  what went right, what went wrong (grouped by cause), and recommended next steps.
+- Rule-based and fully client-side: no AI, no network calls, the uploaded file never leaves the browser.
+- Supports Postman Collection Runner exports and Newman JSON exports.
+- Works with multi-iteration runs (flags flaky requests), slow responses and requests with no assertions.
+- Included in the PDF export when placed inside the exported area (`data-executive-summary-mount`).
+- New files: `script/executive-summary.js`, `css/executive-summary.css`.
