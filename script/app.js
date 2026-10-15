@@ -790,6 +790,7 @@ function initCharts() {
 // pages between cards instead of through them, adapts to any paper size, and
 // has no canvas-size limit on long reports. Charts are swapped for sharp
 // images and the light theme is forced while printing (see prepareForPrint).
+
 let printState = null;
 function prepareForPrint() {
     const container = document.getElementById('reportContainer');
