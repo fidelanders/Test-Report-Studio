@@ -71,8 +71,9 @@
 
   /* ================= parsing ================= */
 
-  /** Minimal RFC-4180 CSV parser (handles quoted fields containing commas, quotes and newlines). */
-  function parseCsv(text) {
+  /** Minimal RFC-4180 CSV parser (handles quoted fields containing delimiters, quotes and newlines). */
+  function parseCsv(text, delim) {
+    delim = delim || ',';
     const rows = [];
     let row = [], field = '', inQ = false;
     for (let i = 0; i < text.length; i++) {
@@ -82,7 +83,7 @@
           if (text[i + 1] === '"') { field += '"'; i++; } else inQ = false;
         } else field += c;
       } else if (c === '"') inQ = true;
-      else if (c === ',') { row.push(field); field = ''; }
+      else if (c === delim) { row.push(field); field = ''; }
       else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
       else if (c !== '\r') field += c;
     }
@@ -90,26 +91,49 @@
     return rows;
   }
 
+  function detectDelimiter(text) {
+    const nl = text.indexOf('\n');
+    const first = nl > 0 ? text.slice(0, nl) : text;
+    const counts = { ',': 0, ';': 0, '\t': 0 };
+    let q = false;
+    for (const c of first) { if (c === '"') q = !q; else if (!q && c in counts) counts[c]++; }
+    const best = Object.keys(counts).sort((x, y) => counts[y] - counts[x])[0];
+    return counts[best] ? best : ',';
+  }
+
   const DEFAULT_COLS = ['timestamp', 'elapsed', 'label', 'responsecode', 'responsemessage', 'threadname', 'datatype', 'success', 'failuremessage', 'bytes', 'sentbytes', 'grpthreads', 'allthreads', 'latency', 'idletime', 'connect'];
 
   function emptyData() {
-    return { n: 0, ts: [], elapsed: [], label: [], ok: [], code: [], msg: [], threads: [], hasThreads: false };
+    return { n: 0, ts: [], elapsed: [], label: [], ok: [], code: [], msg: [], threads: [], hasThreads: false, diag: {} };
   }
+  const toNum = (v) => (v == null || String(v).trim() === '' ? NaN : Number(v));
+  const toTime = (v) => {
+    const n = toNum(v);
+    return isFinite(n) ? n : Date.parse(String(v).trim().replace(/\//g, '-').replace(' ', 'T')); // custom JMeter timestamp_format
+  };
 
   function parseJtlCsv(text) {
-    const rows = parseCsv(text.replace(/^\uFEFF/, ''));
+    text = text.replace(/^\uFEFF/, '');
+    const delim = detectDelimiter(text);
+    const rows = parseCsv(text, delim);
     const d = emptyData();
-    if (!rows.length) return d;
+    d.diag = { format: 'csv', delimiter: delim === '\t' ? 'tab' : delim, rows: Math.max(0, rows.length - 1), columns: [] };
+    if (!rows.length) { d.diag.problem = 'The file is empty.'; return d; }
     let cols = rows[0].map((h) => h.trim().toLowerCase());
     let start = 1;
     if (!cols.includes('elapsed') && /^\d+$/.test((rows[0][0] || '').trim())) { cols = DEFAULT_COLS; start = 0; } // header-less JTL
-    const ix = (name) => cols.indexOf(name);
-    const iTs = ix('timestamp'), iEl = ix('elapsed'), iLb = ix('label'), iRc = ix('responsecode'), iRm = ix('responsemessage');
-    const iOk = ix('success'), iFm = ix('failuremessage'), iAll = ix('allthreads'), iGrp = ix('grpthreads');
-    if (iTs < 0 || iEl < 0) return d;
+    d.diag.columns = cols.slice(0, 20);
+    const ix = (...names) => { for (const nm of names) { const i = cols.indexOf(nm); if (i >= 0) return i; } return -1; };
+    const iTs = ix('timestamp', 'ts'), iEl = ix('elapsed', 't');
+    const iLb = ix('label', 'lb'), iRc = ix('responsecode', 'rc'), iRm = ix('responsemessage', 'rm');
+    const iOk = ix('success', 's'), iFm = ix('failuremessage'), iAll = ix('allthreads', 'na'), iGrp = ix('grpthreads', 'ng');
+    if (iTs < 0 || iEl < 0) {
+      d.diag.problem = 'Could not find the "timeStamp" and "elapsed" columns. This looks like a different CSV layout (for example an aggregate/summary report rather than raw JTL results).';
+      return d;
+    }
     for (let r = start; r < rows.length; r++) {
       const row = rows[r];
-      const ts = Number(row[iTs]), el = Number(row[iEl]);
+      const ts = toTime(row[iTs]), el = toNum(row[iEl]);
       if (!isFinite(ts) || !isFinite(el)) continue;
       d.ts.push(ts);
       d.elapsed.push(el);
@@ -117,23 +141,25 @@
       d.ok.push(iOk >= 0 ? String(row[iOk]).trim().toLowerCase() !== 'false' : true);
       d.code.push(iRc >= 0 ? (row[iRc] || '').trim() : '');
       d.msg.push((iFm >= 0 && row[iFm]) || (iRm >= 0 && row[iRm]) || '');
-      const th = iAll >= 0 ? Number(row[iAll]) : iGrp >= 0 ? Number(row[iGrp]) : NaN;
+      const th = iAll >= 0 ? toNum(row[iAll]) : iGrp >= 0 ? toNum(row[iGrp]) : NaN;
       d.threads.push(isFinite(th) ? th : null);
       if (isFinite(th)) d.hasThreads = true;
     }
     d.n = d.ts.length;
+    if (!d.n) d.diag.problem = 'Found the columns but no valid rows (timestamps or elapsed values could not be read).';
     return d;
   }
 
   /** Best-effort XML JTL support (flat <sample>/<httpSample> elements). CSV is recommended. */
   function parseJtlXml(text) {
     const d = emptyData();
+    d.diag = { format: 'xml', columns: [] };
     const re = /<(?:httpSample|sample)\s([^>]*?)\/?>/g;
     let m;
     while ((m = re.exec(text))) {
       const a = {};
       m[1].replace(/([\w.-]+)="([^"]*)"/g, (_, k, v) => { a[k] = v; return ''; });
-      const ts = Number(a.ts), el = Number(a.t);
+      const ts = toTime(a.ts), el = toNum(a.t);
       if (!isFinite(ts) || !isFinite(el)) continue;
       d.ts.push(ts);
       d.elapsed.push(el);
@@ -141,11 +167,12 @@
       d.ok.push(String(a.s).toLowerCase() !== 'false');
       d.code.push(a.rc || '');
       d.msg.push(a.rm || '');
-      const th = Number(a.na || a.ng);
+      const th = toNum(a.na || a.ng);
       d.threads.push(isFinite(th) ? th : null);
       if (isFinite(th)) d.hasThreads = true;
     }
     d.n = d.ts.length;
+    if (!d.n) d.diag.problem = 'No <sample>/<httpSample> elements with timestamps were found.';
     return d;
   }
 
@@ -431,7 +458,7 @@
   <div class="es-head"><h2>Executive Summary</h2><span class="es-badge">${esc(s.verdictLabel)}</span></div>
   <p class="es-headline">${esc(s.headline)}</p>
   ${s.overview.map((p) => `<p>${esc(p)}</p>`).join('')}
-  ${right || wrong ? `<div class="es-cols">${right}${wrong}</div>` : ''}
+  ${right || wrong ? `<div class="es-cols${right && wrong ? '' : ' es-cols-one'}">${right}${wrong}</div>` : ''}
   ${s.recommendations.length ? `<div class="es-recs"><h3>🛠️ Recommended next steps</h3>${ul(s.recommendations)}</div>` : ''}
   ${s.notes.map((n) => `<p class="es-note">${esc(n)}</p>`).join('')}
   <p class="es-note">Generated automatically from this run's results (rule-based, no AI).</p>`;
@@ -467,7 +494,13 @@
   }
 
   function initBrowser() {
-    const state = { data: null, cfg: Object.assign({ type: 'load' }, TYPE_DEFAULTS.load), node: null, observer: null, hooked: new WeakSet() };
+    const DEBUG = /[?&]esdebug=1/.test(location.search) || window.JMES_DEBUG;
+    const log = (...a) => { if (DEBUG) console.log('[JMES]', ...a); };
+    const state = { data: null, cfg: Object.assign({ type: 'load' }, TYPE_DEFAULTS.load), node: null, observer: null, hooked: new WeakSet(), lastKey: null, pendingKey: null, lastDiag: null };
+    console.info('[JMeter Executive Summary] loaded. Add ?esdebug=1 to the page URL for details.');
+
+    const NAME_OK = /\.(jtl|csv|xml|txt)(\?|#|$)/i;
+    const origReadAsText = FileReader.prototype.readAsText;
 
     const findTypeSelect = () => {
       for (const sel of document.querySelectorAll('select')) {
@@ -479,7 +512,7 @@
     };
 
     const update = () => {
-      if (!state.node) return;
+      if (!state.node || state.notice) return;
       const s = analyze(state.data, state.cfg);
       state.node.className = `es es-jm ${VERDICT_CLASS[s.verdict] || 'es-none'}`;
       state.node.querySelector('.es-body').innerHTML = renderBody(s);
@@ -490,13 +523,22 @@
       const node = state.node;
       if (!node) return;
       const mount = document.querySelector('[data-executive-summary-mount]');
-      if (mount) { mount.appendChild(node); return; }
       const footer = document.querySelector('footer');
-      if (footer && footer.parentNode) { footer.parentNode.insertBefore(node, footer); return; }
-      (document.querySelector('main') || document.body).appendChild(node);
+      if (mount) mount.appendChild(node);
+      else if (footer && footer.parentNode) footer.parentNode.insertBefore(node, footer);
+      else (document.querySelector('main') || document.body).appendChild(node);
+      log('placed', mount ? 'in mount point' : footer ? 'above footer' : 'at end of page');
+      // If it landed inside something that stays hidden, move it to the end of the page so it is always seen.
+      [1200, 3500].forEach((ms) => setTimeout(() => {
+        if (state.node === node && node.isConnected && node.getClientRects().length === 0) {
+          log('hidden where placed; moving to end of page');
+          document.body.appendChild(node);
+        }
+      }, ms));
     };
 
     const syncControls = () => {
+      if (!state.node || state.notice) return;
       state.node.querySelectorAll('[data-es-field]').forEach((el) => {
         const k = el.getAttribute('data-es-field');
         el.value = state.cfg[k] == null ? '' : state.cfg[k];
@@ -506,12 +548,34 @@
     const setType = (type) => {
       if (!TYPE_DEFAULTS[type]) return;
       state.cfg = Object.assign({}, TYPE_DEFAULTS[type], { type });
-      if (state.node) syncControls();
+      syncControls();
       update();
     };
 
+    const watchDom = () => {
+      if (state.observer) state.observer.disconnect();
+      let timer = null;
+      state.observer = new MutationObserver(() => {
+        clearTimeout(timer);
+        timer = setTimeout(() => { if (state.node && !document.getElementById('executive-summary')) place(); }, 150);
+      });
+      state.observer.observe(document.body, { childList: true, subtree: true });
+    };
+
+    const showNotice = (message, diag) => {
+      const old = document.getElementById('executive-summary');
+      if (old) old.remove();
+      const node = document.createElement('section');
+      node.id = 'executive-summary';
+      node.className = 'es es-jm es-none';
+      const cols = diag && diag.columns && diag.columns.length ? `<p class="es-note">Columns found: ${esc(diag.columns.join(', '))}</p>` : '';
+      node.innerHTML = `<div class="es-body"><div class="es-head"><h2>Executive Summary</h2><span class="es-badge">Unavailable</span></div><p class="es-headline">${esc(message)}</p>${cols}<p class="es-note">The main report is not affected. Use a raw JMeter results file (.jtl or .csv with timeStamp and elapsed columns).</p></div>`;
+      state.node = node; state.notice = true;
+      place(); watchDom();
+    };
+
     const show = (data) => {
-      state.data = data;
+      state.data = data; state.notice = false;
       const old = document.getElementById('executive-summary');
       if (old) old.remove();
       const sel = findTypeSelect();
@@ -543,39 +607,92 @@
           if (t && state.data) setType(t);
         });
       }
-
-      // re-attach if the dashboard re-renders and wipes the section
-      if (state.observer) state.observer.disconnect();
-      let timer = null;
-      state.observer = new MutationObserver(() => {
-        clearTimeout(timer);
-        timer = setTimeout(() => { if (state.node && !document.getElementById('executive-summary')) place(); }, 150);
-      });
-      state.observer.observe(document.body, { childList: true, subtree: true });
+      watchDom();
     };
 
-    const readFile = (file) => {
-      if (!file || !/\.(jtl|csv|xml|txt)$/i.test(file.name || '')) return;
+    /** Single entry point: every route (file input, drop, fetch, XHR, FileReader, Blob.text) ends up here. */
+    const handleText = (text, key, name) => {
+      if (key && key === state.lastKey && document.getElementById('executive-summary')) return;
+      state.lastKey = key;
+      let data;
+      try { data = parseJtl(String(text)); } catch (e) { console.warn('[JMeter Executive Summary] parse error:', e); showNotice('The results file could not be parsed.'); return; }
+      state.lastDiag = data.diag;
+      log('parsed', name, data.n, 'samples', data.diag);
+      if (data.n) show(data);
+      else showNotice(`The executive summary could not read "${name}". ${data.diag.problem || ''}`, data.diag);
+    };
+
+    const readBlob = (file) => {
+      if (!file || !file.name || !NAME_OK.test(file.name)) return;
+      const key = `${file.name}|${file.size}|${file.lastModified}`;
+      if (key === state.pendingKey || (key === state.lastKey && document.getElementById('executive-summary'))) return;
+      state.pendingKey = key;
+      log('file seen', file.name, file.size);
       const fr = new FileReader();
-      fr.onload = () => {
-        try {
-          const data = parseJtl(String(fr.result));
-          if (data.n) show(data);
-        } catch (e) { console.warn('[JMeter Executive Summary] could not summarise this file:', e); }
-      };
-      fr.readAsText(file);
+      fr.onload = () => { state.pendingKey = null; handleText(fr.result, key, file.name); };
+      fr.onerror = () => { state.pendingKey = null; };
+      origReadAsText.call(fr, file); // unpatched method: no recursion
     };
 
+    // 1) explicit upload routes
     document.addEventListener('change', (e) => {
       const t = e.target;
-      if (t && t.tagName === 'INPUT' && t.type === 'file' && t.files && t.files[0]) readFile(t.files[0]);
+      if (t && t.tagName === 'INPUT' && t.type === 'file' && t.files && t.files[0]) readBlob(t.files[0]);
     }, true);
     document.addEventListener('drop', (e) => {
       const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-      if (f) readFile(f);
+      if (f) readBlob(f);
     }, true);
 
-    window.JMeterExecutiveSummary = { parse: parseJtl, analyze, show, setType, last: null };
+    // 2) however the page itself reads a file
+    FileReader.prototype.readAsText = function (blob) {
+      try { readBlob(blob); } catch (_) { /* never break the host page */ }
+      return origReadAsText.apply(this, arguments);
+    };
+    if (window.Blob && Blob.prototype.text) {
+      const origText = Blob.prototype.text;
+      Blob.prototype.text = function () {
+        try { readBlob(this); } catch (_) {}
+        return origText.apply(this, arguments);
+      };
+    }
+
+    // 3) sample files / remote results loaded by the page (fetch + XHR)
+    if (window.fetch) {
+      const origFetch = window.fetch;
+      window.fetch = function (input) {
+        const p = origFetch.apply(this, arguments);
+        try {
+          const url = typeof input === 'string' ? input : input && input.url;
+          if (url && NAME_OK.test(url.split('?')[0]) && !/\.xml$/i.test(url.split('?')[0])) {
+            p.then((r) => (r && r.ok ? r.clone().text() : null)).then((t) => { if (t) handleText(t, `fetch|${url}|${t.length}`, url.split('/').pop().split('?')[0]); }).catch(() => {});
+          }
+        } catch (_) {}
+        return p;
+      };
+    }
+    if (window.XMLHttpRequest) {
+      const origOpen = XMLHttpRequest.prototype.open;
+      XMLHttpRequest.prototype.open = function (method, url) {
+        try {
+          if (url && NAME_OK.test(String(url).split('?')[0])) {
+            this.addEventListener('load', () => {
+              try {
+                const t = this.responseType === '' || this.responseType === 'text' ? this.responseText : null;
+                if (t) handleText(t, `xhr|${url}|${t.length}`, String(url).split('/').pop().split('?')[0]);
+              } catch (_) {}
+            });
+          }
+        } catch (_) {}
+        return origOpen.apply(this, arguments);
+      };
+    }
+
+    window.JMeterExecutiveSummary = {
+      parse: parseJtl, analyze, show, setType, last: null,
+      fromText: (text, name) => handleText(text, null, name || 'pasted data'),
+      diagnose: () => ({ loaded: true, sectionInPage: !!document.getElementById('executive-summary'), visible: !!(state.node && state.node.getClientRects().length), lastFile: state.lastKey, lastParse: state.lastDiag }),
+    };
   }
 
   if (typeof window !== 'undefined' && typeof document !== 'undefined') {

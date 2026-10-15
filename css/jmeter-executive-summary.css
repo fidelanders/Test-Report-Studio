@@ -20,3 +20,5 @@ body.dark-mode .es-grid input, body.dark-mode .es-grid select { background: #0f1
 
 /* the settings panel is for on-screen use only */
 @media print { .es-controls { display: none; } }
+
+.es-cols.es-cols-one { grid-template-columns: 1fr; }
