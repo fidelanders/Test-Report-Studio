@@ -87,6 +87,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.0.1/dist/chartjs-plugin-annotation.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script src="script/theme.js"></script>
 <script src="script/jmeter-executive-summary.js"></script>
@@ -241,6 +242,23 @@ function render() {
   if (!touched) { const P = PRESET[ty]; $('tErr').value = P.err; $('tWarn').value = P.warnErr; $('tP95').value = P.p95; $('tP99').value = P.p99; }
   const num = (id, d) => { const v = parseFloat($(id).value); return isNaN(v) ? d : v; }, P0 = PRESET[ty];
   const errL = num('tErr', P0.err), warnErr = Math.max(errL, num('tWarn', P0.warnErr)), p95L = num('tP95', P0.p95), p99L = num('tP99', P0.p99), rL = num('tRps', 0), recoveryL = Math.max(0, num('tRecovery', 120));
+  // Sync executive summary thresholds so both engines agree
+  if (window.JMeterExecutiveSummary && window.JMeterExecutiveSummary.last) {
+    window.JMeterExecutiveSummary.setType(ty);
+    // Override the type-default thresholds with the user's actual values
+    window.JMeterExecutiveSummary.last.config.errorPct = errL;
+    window.JMeterExecutiveSummary.last.config.p95Ms = p95L;
+    window.JMeterExecutiveSummary.last.config.p99Ms = p99L;
+    window.JMeterExecutiveSummary.last.config.minThroughput = rL || null;
+    window.JMeterExecutiveSummary.last.config.driftPct = 20;
+    window.JMeterExecutiveSummary.last.config.recoveryPct = 120;
+    // Re-render the executive summary with synced thresholds
+    const summaryNode = document.getElementById('executive-summary');
+    if (summaryNode && summaryNode.querySelector('.es-body')) {
+      const s = window.JMeterExecutiveSummary.analyze(R, { type: ty });
+      summaryNode.querySelector('.es-body').innerHTML = window.JMeterExecutiveSummary.renderBody(s);
+    }
+  }
 const errorPct = t.er * 100;
 const DEGRADE_ERR = 5; // stress: a slice is degraded when over 5% of its requests fail or its p95 passes the limit
 const grade = (v, lim, le) => le ? (v <= lim ? 'pass' : v <= lim * 1.5 ? 'warn' : 'fail') : (v >= lim ? 'pass' : v >= lim * .9 ? 'warn' : 'fail');
@@ -283,10 +301,32 @@ if (ty === 'spike') note = !hasPost ? 'The run ends before the spike does, so re
 if (ty === 'soak') note = 'Latency drift compares p95 in the first 10% of the run (' + Math.round(firstW.p95) + ' ms) with the last 10% (' + Math.round(lastW.p95) + ' ms). CPU, memory and connection-pool trends need monitoring data and are not inferred from this CSV.';
   if (st === 'warn') note += (note ? ' ' : '') + 'Fix the flagged issues and re-run the test.';
   R.items.forEach(i => { const er = i.er * 100; i.s = ty === 'stress' ? (er > warnErr || i.p95 > p95L * 1.5 ? 'fail' : er > errL || i.p95 > p95L ? 'warn' : 'pass') : (er <= errL && i.p95 <= p95L && i.p99 <= p99L ? 'pass' : er <= warnErr && i.p95 <= p95L * 1.5 && i.p99 <= p99L * 1.5 ? 'warn' : 'fail'); });
+  R.items.forEach(i => {
+    const er = i.er * 100;
+    i.s = ty === 'stress' ? (er > warnErr || i.p95 > p95L * 1.5 ? 'fail' : er > errL || i.p95 > p95L ? 'warn' : 'pass') : (er <= errL && i.p95 <= p95L && i.p99 <= p99L ? 'pass' : er <= warnErr && i.p95 <= p95L * 1.5 && i.p99 <= p99L * 1.5 ? 'warn' : 'fail');
+    // Add failure reason
+    if (i.s === 'fail' || i.s === 'warn') {
+      const reasons = [];
+      if (er > errL) reasons.push('error rate');
+      if (i.p95 > p95L) reasons.push('p95');
+      if (i.p99 > p99L) reasons.push('p99');
+      if (rL > 0 && i.rps < rL) reasons.push('throughput');
+      i.reason = reasons.join(' / ');
+    } else {
+      i.reason = '';
+    }
+  });
+  // const rk = { fail: 0, warn: 1, pass: 2 }, val = (i, k) => k === 'st' ? rk[i.s] : i[k];
+  // const items = [...R.items].sort((a, b) => sk === 'name' || sk === 'st' ? (val(a, sk) > val(b, sk) ? 1 : val(a, sk) < val(b, sk) ? -1 : b.er - a.er) : val(b, sk) - val(a, sk));
+  // const kpi = (icon, cls, v, l, tip) => '<div class="kpi-card"><div class="kpi-icon ' + cls + '"><i class="fas fa-' + icon + '"></i></div><div class="kpi-content"><h3>' + l + '</h3><div class="kpi-value">' + v + '</div><div class="kpi-tooltip">' + tip + '</div></div></div>';
+  // const th = (k, l) => '<th data-k="' + k + '"' + (k === 'name' ? ' style="text-align:left"' : '') + '>' + l + (sk === k ? ' <i class="fas fa-caret-down"></i>' : '') + '</th>';
   const rk = { fail: 0, warn: 1, pass: 2 }, val = (i, k) => k === 'st' ? rk[i.s] : i[k];
   const items = [...R.items].sort((a, b) => sk === 'name' || sk === 'st' ? (val(a, sk) > val(b, sk) ? 1 : val(a, sk) < val(b, sk) ? -1 : b.er - a.er) : val(b, sk) - val(a, sk));
-  const kpi = (icon, cls, v, l, tip) => '<div class="kpi-card"><div class="kpi-icon ' + cls + '"><i class="fas fa-' + icon + '"></i></div><div class="kpi-content"><h3>' + l + '</h3><div class="kpi-value">' + v + '</div><div class="kpi-tooltip">' + tip + '</div></div></div>';
   const th = (k, l) => '<th data-k="' + k + '"' + (k === 'name' ? ' style="text-align:left"' : '') + '>' + l + (sk === k ? ' <i class="fas fa-caret-down"></i>' : '') + '</th>';
+  // Add reason column
+  items.forEach(i => {
+    // ... reason already computed above
+  });
   const sev = { pass: 'success', warn: 'warning', fail: 'danger' }, word = { pass: 'PASSED', warn: 'WARNING · FIX &amp; RE-RUN', fail: 'FAILED' };
   $('metaFile').textContent = R.name; $('metaType').textContent = ty + ' test' + (auto ? ' (auto-detected)' : ''); $('metaRows').textContent = R.rows.toLocaleString() + ' samples'; $('runMetaBar').style.display = '';
   const badge = v => '<span class="badge ' + ({ worse: 'pill-fail', better: 'pill-pass' }[v] || 'pill-neutral') + '">' + ({ worse: 'Worse', better: 'Better', same: 'Same', info: 'Info' }[v]) + '</span>';
@@ -302,22 +342,53 @@ if (ty === 'soak') note = 'Latency drift compares p95 in the first 10% of the ru
   $('out').innerHTML =
     '<section class="overall-status ' + st + ' mb-4"><div><div class="overall-status-main"><span class="badge status-' + sev[st] + '">' + word[st] + '</span><span>' + ty[0].toUpperCase() + ty.slice(1) + ' test · ' + fmtT(R.dur) + '</span></div>' +
     '<div class="chip-row">' + rules.map(r => '<span class="badge pill-' + r.s + '">' + r.name + ' ' + r.val + ' (' + r.lim + ')</span>').join('') + '</div>' +
-    (note ? '<div class="text-muted small mt-2"><i class="fas fa-circle-info me-1"></i>' + note + '</div>' : '') + (R.skip ? '<div class="text-muted small mt-1">' + R.skip + ' unreadable rows were skipped.</div>' : '') + '</div></section>' +
+    (note ? '<div class="text-muted small mt-2"><i class="fas fa-circle-info me-1"></i>' + note + '</div>' : '') + (R.skip ? '<div class="text-muted small mt-1">' + R.skip + ' unreadable rows were skipped.</div>' : '') + '</div>
+    </section>' +
+  <div data-executive-summary-mount></div> +
     '<section class="kpi-grid">' + kpi('sync-alt', 'bg-primary', t.n.toLocaleString(), 'Total Requests', 'Samples in the file') + kpi('triangle-exclamation', t.er > 0 ? 'bg-danger' : 'bg-success', (t.er * 100).toFixed(2) + '%', 'Error Rate', t.f.toLocaleString() + ' failed samples') +
     kpi('clock', 'bg-info', Math.round(t.avg) + 'ms', 'Avg Response Time', 'Mean of all samples') + kpi('gauge-high', 'bg-warning', Math.round(t.p95) + 'ms', 'p95 Response Time', '95% of requests were faster') +
     kpi('bolt', 'bg-primary', Math.round(t.p99) + 'ms', 'p99 Response Time', 'Slowest 1% start here') + kpi('arrow-trend-up', 'bg-success', t.rps.toFixed(1) + '/s', 'Throughput', 'Requests per second') +
     kpi('users', 'bg-info', R.peakUsers || 'n/a', 'Peak Users', 'Most active users at once') + kpi('hourglass-half', 'bg-warning', fmtT(R.dur), 'Test Duration', 'First to last sample') + '</section>' +
     cmpHtml + '<div class="row mb-4"><div class="col-lg-6 mb-3 mb-lg-0"><div class="chart-card"><h4 class="summary-card-title"><i class="fas fa-chart-line me-2"></i>Response Time &amp; Errors</h4><div class="chart-container"><canvas id="c1"></canvas></div></div></div>' +
     '<div class="col-lg-6"><div class="chart-card"><h4 class="summary-card-title"><i class="fas fa-users me-2"></i>Throughput &amp; Users</h4><div class="chart-container"><canvas id="c2"></canvas></div></div></div></div>' +
-    '<div class="summary-card mb-4"><h4 class="summary-card-title"><i class="fas fa-list-check me-2"></i>Endpoints</h4><div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr>' + th('name', 'Label') + th('n', 'Requests') + th('er', 'Error %') + th('avg', 'Avg ms') + th('p95', 'p95') + th('p99', 'p99') + th('mx', 'Max') + th('rps', 'Req/s') + th('st', 'Status') + '</tr></thead><tbody>' +
-    items.map(i => '<tr><td class="lbl">' + esc(i.name) + '</td><td>' + i.n.toLocaleString() + '</td><td>' + (i.er * 100).toFixed(2) + '</td><td>' + Math.round(i.avg) + '</td><td>' + Math.round(i.p95) + '</td><td>' + Math.round(i.p99) + '</td><td>' + i.mx + '</td><td>' + i.rps.toFixed(1) + '</td><td><span class="badge pill-' + i.s + '">' + i.s.toUpperCase() + '</span></td></tr>').join('') + '</tbody></table></div></div>' +
+    '<div class="summary-card mb-4"><h4 class="summary-card-title"><i class="fas fa-list-check me-2"></i>Endpoints</h4><div class="table-responsive"><table class="table table-hover align-middle mb-0"><thead><tr>' + th('name', 'Label') + th('n', 'Requests') + th('er', 'Error %') + th('avg', 'Avg ms') + th('p95', 'p95') + th('p99', 'p99') + th('mx', 'Max') + th('rps', 'Req/s') + th('st', 'Status') + '<th>Reason</th></tr></thead>' +
+    items.map(i => '<tr><td class="lbl">' + esc(i.name) + '</td><td>' + i.n.toLocaleString() + '</td><td>' + (i.er * 100).toFixed(2) + '</td><td>' + Math.round(i.avg) + '</td><td>' + Math.round(i.p95) + '</td><td>' + Math.round(i.p99) + '</td><td>' + i.mx + '</td><td>' + i.rps.toFixed(1) + '</td><td><span class="badge pill-' + i.s + '">' + i.s.toUpperCase() + '</span></td><td class="small text-muted">' + (i.reason || '-') + '</td></tr>').join('') + '</tbody></table></div></div>' +
     '<div class="row"><div class="col-lg-6 mb-3"><div class="summary-card"><h4 class="summary-card-title"><i class="fas fa-circle-xmark me-2"></i>What Failed</h4><div class="table-responsive"><table class="table table-sm mb-0"><thead><tr><th style="text-align:left">Endpoint</th><th style="text-align:left">Error</th><th class="text-end">Failures</th></tr></thead><tbody>' + (t.top.length ? t.top.map(([k, c]) => { const [lb, er] = k.split('\u0001'); return '<tr><td class="lbl">' + esc(disp(lb)) + '</td><td class="lbl">' + esc(er) + '</td><td class="text-end">' + c.toLocaleString() + '</td></tr>'; }).join('') : '<tr><td colspan="3">No errors 🎉</td></tr>') + '</tbody></table></div></div></div>' +
     '<div class="col-lg-6 mb-3"><div class="summary-card"><h4 class="summary-card-title"><i class="fas fa-hourglass-end me-2"></i>Slowest Requests</h4><table class="table table-sm mb-0">' + R.slow.slice(0, 10).map(s => '<tr><td class="lbl">' + esc(disp(s.lb)) + '</td><td class="text-end">' + s.el.toLocaleString() + ' ms</td></tr>').join('') + '</table></div></div></div>';
   $('out').hidden = false;
   charts.forEach(c => c.destroy());
   const lb = tl.map((_, i) => fmtT(i * R.w)), o = (a, b) => ({ responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { title: { display: true, text: a } }, y1: { position: 'right', grid: { drawOnChartArea: false }, title: { display: true, text: b } } } });
+  // charts = [
+  //   new Chart($('c1'), { type: 'line', data: { labels: lb, datasets: [{ label: 'Avg response (ms)', data: tl.map(b => b.n ? b.s / b.n : null), borderColor: '#8E44AD', tension: .25, pointRadius: 0, yAxisID: 'y' }, { type: 'bar', label: 'Errors', data: tl.map(b => b.f), backgroundColor: '#dc2626', yAxisID: 'y1' }] }, options: o('ms', 'errors') }),
+  //   new Chart($('c2'), { type: 'line', data: { labels: lb, datasets: [{ label: 'Throughput (req/s)', data: tl.map(b => b.n / R.w), borderColor: '#16a34a', tension: .25, pointRadius: 0, yAxisID: 'y' }, { label: 'Active users', data: tl.map(b => b.users), borderColor: '#d63384', pointRadius: 0, yAxisID: 'y1' }] }, options: o('req/s', 'users') })
+  // ];
+  // Build annotation datasets for special points
+  const annotations = [];
+  const addLine = (data, label, color, dash, idx) => {
+    const pts = Array(lb.length).fill(null);
+    pts[idx] = 0; // anchor to bottom of y-axis
+    annotations.push({
+      type: 'line',
+      borderColor: color,
+      borderWidth: 2,
+      borderDash: dash || [6, 4],
+      xMin: idx, xMax: idx,
+      label: label,
+    });
+  };
+
+  if (ty === 'stress' && bi >= 0) {
+    addLine(null, 'Break', '#e67e22', [8, 4], bi);
+  }
+  if (ty === 'spike' && spikeStart >= 0) {
+    addLine(null, 'Spike start', '#e74c3c', [4, 4], spikeStart);
+  }
+  if (ty === 'spike' && spikeEnd >= 0) {
+    addLine(null, 'Spike end', '#e74c3c', [4, 4], spikeEnd);
+  }
+
   charts = [
-    new Chart($('c1'), { type: 'line', data: { labels: lb, datasets: [{ label: 'Avg response (ms)', data: tl.map(b => b.n ? b.s / b.n : null), borderColor: '#8E44AD', tension: .25, pointRadius: 0, yAxisID: 'y' }, { type: 'bar', label: 'Errors', data: tl.map(b => b.f), backgroundColor: '#dc2626', yAxisID: 'y1' }] }, options: o('ms', 'errors') }),
+    new Chart($('c1'), { type: 'line', data: { labels: lb, datasets: [{ label: 'Avg response (ms)', data: tl.map(b => b.n ? b.s / b.n : null), borderColor: '#8E44AD', tension: .25, pointRadius: 0, yAxisID: 'y' }, { type: 'bar', label: 'Errors', data: tl.map(b => b.f), backgroundColor: '#dc2626', yAxisID: 'y1' }] }, options: { ...o('ms', 'errors'), plugins: { annotation: { annotations } } } }),
     new Chart($('c2'), { type: 'line', data: { labels: lb, datasets: [{ label: 'Throughput (req/s)', data: tl.map(b => b.n / R.w), borderColor: '#16a34a', tension: .25, pointRadius: 0, yAxisID: 'y' }, { label: 'Active users', data: tl.map(b => b.users), borderColor: '#d63384', pointRadius: 0, yAxisID: 'y1' }] }, options: o('req/s', 'users') })
   ];
   if (cmp) charts.push(new Chart($('c3'), { type: 'line', data: { labels: Array.from({ length: 50 }, (_, i) => Math.round(i / 49 * 100) + '%'), datasets: [{ label: 'Baseline p95 (ms)', data: resample(BASE.tl, 50), borderColor: '#7f8c8d', borderDash: [6, 4], pointRadius: 0, tension: .25, spanGaps: true }, { label: 'Now p95 (ms)', data: resample(tl, 50), borderColor: '#8E44AD', pointRadius: 0, tension: .25, spanGaps: true }] }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { y: { title: { display: true, text: 'p95 (ms)' } }, x: { title: { display: true, text: 'Progress through the run' } } } } }));
