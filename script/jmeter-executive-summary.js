@@ -689,7 +689,7 @@
     }
 
     window.JMeterExecutiveSummary = {
-      parse: parseJtl, analyze, show, setType, last: null,
+      parse: parseJtl, analyze, show, renderBody, setType, last: null,
       fromText: (text, name) => handleText(text, null, name || 'pasted data'),
       diagnose: () => ({ loaded: true, sectionInPage: !!document.getElementById('executive-summary'), visible: !!(state.node && state.node.getClientRects().length), lastFile: state.lastKey, lastParse: state.lastDiag }),
     };
