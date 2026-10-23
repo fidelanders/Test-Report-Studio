@@ -156,9 +156,15 @@ function startProgress() { $('msg').classList.add('d-none'); $('progWrap').class
 function parse(file) {
   startProgress(); $('out').hidden = true;
   return readJtl(file, p => { $('prog').style.width = p + '%'; }).then(rep => {
-    R = rep; BASE = null; $('progWrap').classList.add('d-none'); $('drop').classList.add('d-none'); $('newBtn').classList.remove('d-none'); render();
+    R = rep; BASE = null; $('progWrap').classList.add('d-none'); $('drop').classList.add('d-none'); $('newBtn').classList.remove('d-none'); 
+    render();
+    // Force executive summary to re-render with the parsed data
+    if (window.JMeterExecutiveSummary && window.JMeterExecutiveSummary.last) {
+      window.JMeterExecutiveSummary.show(window.JMeterExecutiveSummary.last);
+    }
   }).catch(e => fail(e.message || String(e)));
 }
+  
 // Baseline = an older run to compare the current report against
 function loadBaseline(file) {
   startProgress();
