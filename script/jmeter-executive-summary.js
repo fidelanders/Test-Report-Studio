@@ -623,6 +623,8 @@
     };
 
     const readBlob = (file) => {
+      (window.__ES_DISABLE_AUTO_INTERCEPT) return;
+
       if (!file || !file.name || !NAME_OK.test(file.name)) return;
       const key = `${file.name}|${file.size}|${file.lastModified}`;
       if (key === state.pendingKey || (key === state.lastKey && document.getElementById('executive-summary'))) return;
